@@ -1,21 +1,13 @@
 """
-Intelligent Safety Net — Demo UI
-=================================
-Full-featured Streamlit dashboard for IXOM product safety verification.
-
-Features:
-  1. Upload supplier certificate (PDF) → AI classifies & validates
-  2. Select IXOM product spec or upload custom spec
-  3. Side-by-side parameter comparison with traffic-light highlighting
-  4. Wrong document detection (not a certificate)
-  5. Value mismatch alerts with severity levels
-  6. Batch audit log history
-  7. Extracted data viewer
+Intelligent Document Verification — Demo UI
+=============================================
+Polished Streamlit dashboard for automated supplier certificate validation.
 
 Run:  streamlit run ui.py
 """
 
 import sys
+import os
 import json
 import tempfile
 import time
@@ -25,631 +17,634 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-# ─── Ensure project root on path ─────────────────────────────────────
-PROJECT_ROOT = Path(__file__).parent.resolve()
-sys.path.insert(0, str(PROJECT_ROOT))
-
 import config
-from model_switcher import get_model
 from core.document_classifier import classify_document
 from core.spec_extractor import extract_spec
 from core.cert_extractor import extract_certificate
 from core.comparator import compare_documents
-from core.unit_normalizer import normalize_param_name
+from core.logger import log_result
 
-# ─── Page Config ──────────────────────────────────────────────────────
+# ── Config ──────────────────────────────────────────────────────────────
+MODEL = config.DEFAULT_MODEL
+
+# ── Page Setup ──────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="IXOM Intelligent Safety Net",
-    page_icon="🛡️",
+    page_title="Intelligent Document Verification",
+    page_icon=None,
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
-# ─── Custom CSS ───────────────────────────────────────────────────────
-st.markdown("""
+# ── CSS ─────────────────────────────────────────────────────────────────
+st.markdown(
+    """
 <style>
-    .main-header {
-        background: linear-gradient(135deg, #1a237e 0%, #0d47a1 100%);
-        padding: 1.5rem 2rem;
-        border-radius: 12px;
-        margin-bottom: 1.5rem;
-        color: white;
-    }
-    .main-header h1 { color: white; margin: 0; font-size: 1.8rem; }
-    .main-header p { color: #bbdefb; margin: 0.3rem 0 0 0; font-size: 0.95rem; }
+/* Hide sidebar, hamburger, footer */
+[data-testid="stSidebar"] {display:none}
+#MainMenu {visibility:hidden}
+footer {visibility:hidden}
+header {visibility:hidden}
 
-    .status-pass {
-        background-color: #28a745; color: white; padding: 6px 18px;
-        border-radius: 20px; font-weight: bold; font-size: 1.1rem;
-        display: inline-block;
-    }
-    .status-fail {
-        background-color: #dc3545; color: white; padding: 6px 18px;
-        border-radius: 20px; font-weight: bold; font-size: 1.1rem;
-        display: inline-block;
-    }
-    .status-review {
-        background-color: #ffc107; color: #333; padding: 6px 18px;
-        border-radius: 20px; font-weight: bold; font-size: 1.1rem;
-        display: inline-block;
-    }
-    .status-error {
-        background-color: #dc3545; color: white; padding: 6px 18px;
-        border-radius: 20px; font-weight: bold; font-size: 1.1rem;
-        display: inline-block;
-    }
-
-    .alert-critical {
-        background: #4a1a1a; border-left: 5px solid #ff6b6b;
-        padding: 1rem; margin: 0.5rem 0; border-radius: 4px;
-        color: #ffcdd2;
-    }
-    .alert-critical h4 { color: #ff8a80; }
-    .alert-critical p { color: #ffcdd2; }
-    .alert-critical strong { color: #ffffff; }
-
-    .alert-warning {
-        background: #3e3518; border-left: 5px solid #ffca28;
-        padding: 1rem; margin: 0.5rem 0; border-radius: 4px;
-        color: #fff8e1;
-    }
-    .alert-warning h4 { color: #ffd54f; }
-    .alert-warning p { color: #fff8e1; }
-    .alert-warning strong { color: #ffffff; }
-
-    .alert-success {
-        background: #1b3a1b; border-left: 5px solid #66bb6a;
-        padding: 1rem; margin: 0.5rem 0; border-radius: 4px;
-        color: #c8e6c9;
-    }
-    .alert-success h4 { color: #81c784; }
-    .alert-success p { color: #c8e6c9; }
-    .alert-success strong { color: #ffffff; }
-</style>
-""", unsafe_allow_html=True)
-
-
-# ─── Constants ────────────────────────────────────────────────────────
-AUDIT_LOG = config.AUDIT_LOG
-JSON_DIR = config.JSON_OUTPUT_DIR
-SOURCE_PDFS = config.SOURCE_PDFS_DIR
-
-STATUS_BADGE = {
-    "PASS": '<span class="status-pass">✅ PASS — Certificate Verified</span>',
-    "FAIL": '<span class="status-fail">❌ FAIL — Certificate Rejected</span>',
-    "REVIEW": '<span class="status-review">🔍 REVIEW — Manual Check Required</span>',
-    "ERROR": '<span class="status-error">⚠️ ERROR — Processing Failed</span>',
+/* Global */
+.block-container {
+    padding-top: 1rem !important;
+    padding-bottom: 1rem !important;
+    max-width: 1200px;
 }
 
+/* Hero header */
+.hero-header {
+    background: linear-gradient(135deg, #0a1628 0%, #1a3a5c 50%, #2a5a8c 100%);
+    border-radius: 12px;
+    padding: 1.5rem 2rem;
+    margin-bottom: 1.2rem;
+    border: 1px solid rgba(255,255,255,0.08);
+}
+.hero-header h1 {
+    color: #ffffff;
+    font-size: 1.6rem;
+    font-weight: 700;
+    margin: 0 0 0.4rem 0;
+    letter-spacing: 1.5px;
+}
+.hero-subtitle {
+    color: #94a3b8;
+    font-size: 0.85rem;
+    margin: 0 0 0.8rem 0;
+}
+.pipeline-steps {
+    display: flex;
+    gap: 0.8rem;
+    flex-wrap: wrap;
+}
+.pipeline-step {
+    background: rgba(59,130,246,0.15);
+    border: 1px solid rgba(59,130,246,0.3);
+    border-radius: 20px;
+    padding: 0.25rem 0.8rem;
+    color: #93c5fd;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+.step-num {
+    background: #3b82f6;
+    color: white;
+    border-radius: 50%;
+    width: 18px;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.65rem;
+    margin-right: 0.3rem;
+}
 
-def _save_uploaded_file(uploaded_file) -> str:
-    """Save an uploaded file to a temp location and return the path."""
-    suffix = Path(uploaded_file.name).suffix
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-    tmp.write(uploaded_file.getvalue())
+/* Upload section labels */
+.upload-label {
+    color: #e2e8f0;
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 0 0.4rem 0;
+    padding: 0;
+}
+
+/* Kill ALL default spacing inside upload columns */
+div[data-testid="stFileUploader"] {
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+    padding-bottom: 0 !important;
+}
+div[data-testid="stFileUploader"] > section {
+    padding: 0 !important;
+}
+div[data-testid="stFileUploader"] label {
+    display: none !important;
+}
+.file-loaded {
+    margin-top: 0.35rem !important;
+    margin-bottom: 0 !important;
+}
+
+/* Tighten all vertical blocks globally */
+div[data-testid="stVerticalBlock"] > div {
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+}
+.element-container {
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+}
+
+/* Status badges */
+.status-pass {
+    background: linear-gradient(135deg, #065f46, #047857);
+    color: #6ee7b7;
+    padding: 0.15rem 0.6rem;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 0.8rem;
+}
+.status-fail {
+    background: linear-gradient(135deg, #7f1d1d, #991b1b);
+    color: #fca5a5;
+    padding: 0.15rem 0.6rem;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 0.8rem;
+}
+.status-review {
+    background: linear-gradient(135deg, #78350f, #92400e);
+    color: #fcd34d;
+    padding: 0.15rem 0.6rem;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 0.8rem;
+}
+
+/* Alert panels */
+.alert-success {
+    background: rgba(6,78,59,0.3);
+    border-left: 4px solid #10b981;
+    border-radius: 6px;
+    padding: 0.8rem 1rem;
+    margin: 0.5rem 0;
+    color: #a7f3d0;
+    font-size: 0.85rem;
+}
+.alert-error {
+    background: rgba(127,29,29,0.3);
+    border-left: 4px solid #ef4444;
+    border-radius: 6px;
+    padding: 0.8rem 1rem;
+    margin: 0.5rem 0;
+    color: #fecaca;
+    font-size: 0.85rem;
+}
+.alert-warning {
+    background: rgba(120,53,15,0.3);
+    border-left: 4px solid #f59e0b;
+    border-radius: 6px;
+    padding: 0.8rem 1rem;
+    margin: 0.5rem 0;
+    color: #fde68a;
+    font-size: 0.85rem;
+}
+.alert-info {
+    background: rgba(30,58,138,0.3);
+    border-left: 4px solid #3b82f6;
+    border-radius: 6px;
+    padding: 0.8rem 1rem;
+    margin: 0.5rem 0;
+    color: #bfdbfe;
+    font-size: 0.85rem;
+}
+
+/* Metric cards */
+.metric-card {
+    background: rgba(15,23,42,0.6);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+    padding: 0.8rem 1rem;
+    text-align: center;
+}
+.metric-card .label {
+    color: #94a3b8;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 0.3rem;
+}
+.metric-card .value {
+    color: #f1f5f9;
+    font-size: 1.5rem;
+    font-weight: 700;
+}
+
+/* Section headers */
+.section-header {
+    color: #e2e8f0;
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin: 1rem 0 0.5rem 0;
+    padding-bottom: 0.3rem;
+    border-bottom: 2px solid rgba(59,130,246,0.3);
+}
+
+/* Validate button */
+.stButton > button {
+    background: linear-gradient(135deg, #1e40af, #3b82f6) !important;
+    color: white !important;
+    border: none !important;
+    border-radius: 8px !important;
+    padding: 0.6rem 2rem !important;
+    font-weight: 600 !important;
+    font-size: 0.95rem !important;
+    width: 100% !important;
+    transition: all 0.2s ease !important;
+}
+.stButton > button:hover {
+    background: linear-gradient(135deg, #1e3a8a, #2563eb) !important;
+    box-shadow: 0 4px 15px rgba(59,130,246,0.3) !important;
+    transform: translateY(-1px) !important;
+}
+
+/* Reduce gaps globally */
+.stRadio > div {
+    gap: 0.3rem !important;
+}
+div[data-testid="stVerticalBlock"] > div {
+    gap: 0.15rem !important;
+}
+div[data-testid="column"] > div {
+    gap: 0.15rem !important;
+}
+
+/* Tighter spacing after tabs header */
+.stTabs [data-baseweb="tab-panel"] {
+    padding-top: 0.5rem !important;
+}
+
+/* Table styling */
+.comparison-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+    margin-top: 0.5rem;
+}
+.comparison-table th {
+    background: rgba(30,58,138,0.4);
+    color: #93c5fd;
+    padding: 0.5rem 0.6rem;
+    text-align: left;
+    font-weight: 600;
+    border-bottom: 2px solid rgba(59,130,246,0.3);
+}
+.comparison-table td {
+    padding: 0.4rem 0.6rem;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    color: #e2e8f0;
+}
+.comparison-table tr:hover {
+    background: rgba(59,130,246,0.05);
+}
+
+/* Loaded/uploaded file confirmations */
+.file-loaded {
+    background: rgba(6,78,59,0.4);
+    border: 1px solid rgba(16,185,129,0.3);
+    border-radius: 6px;
+    padding: 0.3rem 0.8rem;
+    color: #6ee7b7;
+    font-size: 0.82rem;
+    margin-top: 0.3rem !important;
+    margin-bottom: 0 !important;
+    line-height: 1.3;
+}
+
+/* Tabs styling */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 0.5rem;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+.stTabs [data-baseweb="tab"] {
+    padding: 0.5rem 1rem;
+    font-size: 0.85rem;
+}
+
+/* Getting started box */
+.getting-started {
+    background: rgba(30,58,138,0.15);
+    border: 1px dashed rgba(59,130,246,0.3);
+    border-radius: 10px;
+    padding: 1.5rem 2rem;
+    text-align: center;
+    margin: 1rem 0;
+}
+.getting-started h4 {
+    color: #93c5fd;
+    margin: 0 0 0.5rem 0;
+}
+.getting-started p {
+    color: #64748b;
+    font-size: 0.85rem;
+    margin: 0;
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+
+# ── Helper functions ────────────────────────────────────────────────────
+def status_badge(status: str) -> str:
+    s = status.upper()
+    cls = {"PASS": "status-pass", "FAIL": "status-fail"}.get(s, "status-review")
+    return f'<span class="{cls}">{s}</span>'
+
+
+def save_upload(uploaded_file) -> str:
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+    tmp.write(uploaded_file.getbuffer())
     tmp.close()
     return tmp.name
 
 
-def _get_spec_options() -> dict:
-    """Get available IXOM spec PDFs from the mapping file."""
-    specs = {}
-    if config.MAPPING_FILE.exists():
-        mapping = pd.read_excel(config.MAPPING_FILE)
-        for _, row in mapping.iterrows():
-            material = row.get("Material_Number", "")
-            spec_file = row.get("Spec_File", "")
-            industry = row.get("Industry", "")
-            if spec_file and not pd.isna(spec_file):
-                label = f"{material} — {spec_file} [{industry}]"
-                specs[label] = str(spec_file)
-    return specs
-
-
-def _resolve_spec_path(filename: str) -> str:
-    """Find the spec PDF in known locations."""
-    for folder in [config.SPECS_DIR, SOURCE_PDFS, PROJECT_ROOT / "data"]:
-        path = folder / filename
-        if path.exists():
-            return str(path)
-    return None
-
-
-def _color_param_row(row):
-    """Apply row-level coloring based on status (dark-mode friendly)."""
-    status = row.get("Status", "")
-    if status == "FAIL":
-        return ["background-color: #4a1a1a; color: #ff8a80"] * len(row)
-    elif status == "REVIEW":
-        return ["background-color: #3e3518; color: #ffd54f"] * len(row)
-    elif status == "PASS":
-        return ["background-color: #1b3a1b; color: #81c784"] * len(row)
-    elif status == "NOT_IN_CERT":
-        return ["background-color: #2a2a3a; color: #9e9e9e"] * len(row)
-    return ["color: #e0e0e0"] * len(row)
-
-
-# ═══════════════════════════════════════════════════════════════════════
-#  HEADER
-# ═══════════════════════════════════════════════════════════════════════
-st.markdown("""
-<div class="main-header">
-    <h1>🛡️ Intelligent Safety Net</h1>
-    <p>IXOM Product Safety Verification Engine — Supplier Certificate Validation</p>
+# ── Hero Header ─────────────────────────────────────────────────────────
+st.markdown(
+    """
+<div class="hero-header">
+    <h1>INTELLIGENT DOCUMENT VERIFICATION</h1>
+    <p class="hero-subtitle">Automated Supplier Certificate Validation Engine</p>
+    <div class="pipeline-steps">
+        <span class="pipeline-step"><span class="step-num">1</span> Upload Documents</span>
+        <span class="pipeline-step"><span class="step-num">2</span> AI Classification</span>
+        <span class="pipeline-step"><span class="step-num">3</span> Parameter Extraction</span>
+        <span class="pipeline-step"><span class="step-num">4</span> Compliance Check</span>
+    </div>
 </div>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
+# ── Tabs ────────────────────────────────────────────────────────────────
+tab_validate, tab_history = st.tabs(["Validate Certificate", "Audit History"])
 
-# ═══════════════════════════════════════════════════════════════════════
-#  SIDEBAR
-# ═══════════════════════════════════════════════════════════════════════
-with st.sidebar:
-    st.markdown("### ⚙️ Settings")
-    model = st.selectbox(
-        "AI Model",
-        config.AVAILABLE_MODELS,
-        index=0,
-        help="GPT-4o is recommended for best accuracy"
-    )
-    st.markdown(f"**Temperature:** {config.TEMPERATURE}")
-    st.markdown("---")
-
-    st.markdown("### 📖 How It Works")
-    st.markdown("""
-    1. **Upload** a supplier certificate (PDF)
-    2. **Select** the IXOM product spec to validate against
-    3. **AI classifies** the document type instantly
-    4. **Parameters extracted** from both documents
-    5. **Comparison** checks every value against spec limits
-    6. **Result** — Pass ✅ / Fail ❌ / Review 🔍
-    """)
-    st.markdown("---")
-
-    st.markdown("### 🚨 What Gets Detected")
-    st.markdown("""
-    - ❌ **Wrong document** — supplier sends invoice instead of certificate
-    - ❌ **Value out of range** — test result outside spec limits
-    - 🔍 **Missing parameters** — certificate doesn't cover all spec items
-    - 🔍 **Unit mismatches** — incompatible measurement units
-    - ✅ **Full compliance** — all values within specification
-    """)
-
-
-# ═══════════════════════════════════════════════════════════════════════
-#  MAIN TABS
-# ═══════════════════════════════════════════════════════════════════════
-tab_validate, tab_batch, tab_history = st.tabs([
-    "🔬 Validate Certificate",
-    "📦 Batch Processing",
-    "📊 Audit History"
-])
-
-
-# ─────────────────────────────────────────────────────────────────────
-#  TAB 1: VALIDATE CERTIFICATE (Upload & Compare)
-# ─────────────────────────────────────────────────────────────────────
+# =====================================================================
+# TAB 1 — VALIDATE
+# =====================================================================
 with tab_validate:
-    st.markdown("## Upload & Validate Supplier Certificate")
-    st.markdown("Upload a supplier certificate and select the IXOM product specification to validate against.")
 
-    col_spec, col_cert = st.columns(2)
+    col_spec, col_cert = st.columns(2, gap="medium")
 
-    # ── LEFT: IXOM Product Specification ──
+    # ── Left: Product Specification Upload ──
     with col_spec:
-        st.markdown("### 📋 IXOM Product Specification")
-        spec_source = st.radio(
-            "Specification source:",
-            ["Select from IXOM catalog", "Upload custom spec PDF"],
-            horizontal=True,
-            key="spec_source",
+        st.markdown('<p class="upload-label">Product Specification</p>', unsafe_allow_html=True)
+        spec_file = st.file_uploader(
+            "Upload spec", type=["pdf"], key="spec_upload", label_visibility="collapsed",
         )
-
         spec_path = None
+        if spec_file:
+            spec_path = save_upload(spec_file)
+            st.markdown(f'<div class="file-loaded">Loaded: {spec_file.name}</div>', unsafe_allow_html=True)
 
-        if spec_source == "Select from IXOM catalog":
-            spec_options = _get_spec_options()
-            if spec_options:
-                selected_spec = st.selectbox(
-                    "Select product specification:",
-                    list(spec_options.keys()),
-                    key="spec_select",
-                )
-                spec_filename = spec_options[selected_spec]
-                spec_path = _resolve_spec_path(spec_filename)
-                if spec_path:
-                    st.success(f"📄 Loaded: **{spec_filename}**")
-                else:
-                    st.error(f"Spec file not found: {spec_filename}")
-            else:
-                st.warning("No mapping file found. Run `python build_mapping.py` first.")
-        else:
-            spec_upload = st.file_uploader(
-                "Upload Product Specification PDF",
-                type=["pdf"],
-                key="spec_upload",
-            )
-            if spec_upload:
-                spec_path = _save_uploaded_file(spec_upload)
-                st.success(f"📄 Uploaded: **{spec_upload.name}**")
-
-    # ── RIGHT: Supplier Certificate ──
+    # ── Right: Supplier Certificate Upload ──
     with col_cert:
-        st.markdown("### 📜 Supplier Certificate")
-        cert_type_select = st.selectbox(
-            "Expected certificate type:",
-            ["COA (Certificate of Analysis)", "COCA (Certificate of Compliance/Analysis)", "COC (Certificate of Conformance)"],
-            key="cert_type",
+        st.markdown('<p class="upload-label">Supplier Certificate</p>', unsafe_allow_html=True)
+        cert_file = st.file_uploader(
+            "Upload cert", type=["pdf"], key="cert_upload", label_visibility="collapsed",
         )
-        cert_type = cert_type_select.split(" ")[0]
-
-        cert_upload = st.file_uploader(
-            "Upload Supplier Certificate PDF",
-            type=["pdf"],
-            key="cert_upload",
-            help="Drag & drop or browse for the supplier's certificate document"
-        )
-
         cert_path = None
-        if cert_upload:
-            cert_path = _save_uploaded_file(cert_upload)
-            st.success(f"📜 Uploaded: **{cert_upload.name}**")
+        if cert_file:
+            cert_path = save_upload(cert_file)
+            st.markdown(f'<div class="file-loaded">Uploaded: {cert_file.name}</div>', unsafe_allow_html=True)
 
-    # ── VALIDATE BUTTON ──
-    st.markdown("---")
+    # ── Validate Button ─────────────────────────────────────────────
+    if not (spec_path and cert_path):
+        st.markdown(
+            """
+        <div class="getting-started">
+            <h4>Getting Started</h4>
+            <p>Upload a product specification and a supplier certificate to begin validation.</p>
+        </div>
+        """,
+            unsafe_allow_html=True,
+        )
+    else:
+        if st.button("Validate Certificate", use_container_width=True):
 
-    if spec_path and cert_path:
-        if st.button("🚀 Validate Certificate", type="primary", use_container_width=True):
+            # ── Progress pipeline ──
+            progress_bar = st.progress(0, text="Classifying document...")
+            t0 = time.time()
 
-            progress_bar = st.progress(0, text="Starting validation...")
-            results_container = st.container()
+            # 1/4 — Classify
+            classification = classify_document(cert_path, MODEL)
+            detected_type = classification.get("document_type", "COA").upper()
+            valid_types = ["COA", "COCA", "COC"]
+            cert_type = detected_type if detected_type in valid_types else "COA"
+            confidence = classification.get("confidence_score", 0)
+            progress_bar.progress(25, text="Extracting specification parameters...")
 
-            with results_container:
-                try:
-                    # ── Step 1: Classify ──
-                    progress_bar.progress(10, text="Step 1/4 — Classifying document...")
-                    classification = classify_document(cert_path, model)
-                    detected_type = classification.get("document_type", "Unknown")
-                    confidence = classification.get("confidence_score", 0.0)
+            # 2/4 — Extract spec
+            spec_data = extract_spec(spec_path, MODEL)
+            product = spec_data.get("product_name", "Unknown")
+            spec_params = spec_data.get("parameters", [])
+            progress_bar.progress(50, text="Extracting certificate data...")
 
-                    # ── WRONG DOCUMENT ALERT ──
-                    valid_cert_types = ["COA", "COCA", "COC", "Product_Specification"]
-                    is_wrong_doc = detected_type not in valid_cert_types
+            # 3/4 — Extract certificate
+            cert_data = extract_certificate(cert_path, MODEL, expected_type=cert_type)
+            cert_product = cert_data.get("product_name", "Unknown")
+            cert_params = cert_data.get("parameters", [])
+            progress_bar.progress(75, text="Running compliance check...")
 
-                    if is_wrong_doc:
-                        progress_bar.progress(100, text="⚠️ Wrong document detected!")
-                        st.markdown(STATUS_BADGE.get("FAIL", ""), unsafe_allow_html=True)
-                        st.markdown(f"""
-                        <div class="alert-critical">
-                            <h4>🚨 WRONG DOCUMENT DETECTED</h4>
-                            <p>The uploaded file is <strong>NOT a valid certificate</strong>.</p>
-                            <p><strong>Detected as:</strong> {detected_type} (confidence: {confidence:.0%})</p>
-                            <p><strong>Expected:</strong> {cert_type}</p>
-                            <p>The supplier may have sent the wrong file (e.g., an invoice, a product brochure, 
-                            or an unrelated document). This document should be <strong>rejected immediately</strong> 
-                            and the correct certificate requested from the supplier.</p>
-                        </div>
-                        """, unsafe_allow_html=True)
-                        st.markdown(f"**AI Reasoning:** {classification.get('reasoning', 'N/A')}")
-                        st.stop()
+            # 4/4 — Compare
+            result = compare_documents(spec_data, cert_data, cert_type=cert_type, model=MODEL)
+            progress_bar.progress(100, text="Complete!")
+            elapsed = time.time() - t0
 
-                    # Show classification result
-                    st.markdown("#### 📄 Document Classification")
-                    cls_col1, cls_col2, cls_col3 = st.columns(3)
-                    cls_col1.metric("Detected Type", detected_type)
-                    cls_col2.metric("Confidence", f"{confidence:.0%}")
-                    cls_col3.metric("Product", classification.get("product_name", "—")[:30])
+            # Clear progress bar
+            time.sleep(0.3)
+            progress_bar.empty()
 
-                    if detected_type != cert_type and detected_type != "Product_Specification":
-                        st.warning(f"⚠️ Document detected as **{detected_type}** but you selected **{cert_type}**. Proceeding with detected type.")
-                        cert_type = detected_type
+            # ── FINAL REPORT ──────────────────────────────────────
+            # Read correct keys from comparator output
+            overall = result.get("status", "REVIEW").upper()
+            details = result.get("details", [])
+            reason = result.get("reason", "")
 
-                    # ── Step 2: Extract Spec ──
-                    progress_bar.progress(30, text="Step 2/4 — Extracting specification parameters...")
-                    spec_data = extract_spec(spec_path, model)
-                    n_spec = len(spec_data.get("parameters", []))
+            n_pass = result.get("parameters_passed", 0)
+            n_fail = result.get("parameters_failed", 0)
+            n_review = result.get("parameters_review", 0)
+            n_not_in_cert = result.get("parameters_not_in_cert", 0)
 
-                    # ── Step 3: Extract Certificate ──
-                    progress_bar.progress(55, text="Step 3/4 — Extracting certificate data...")
-                    cert_data = extract_certificate(cert_path, model, expected_type=cert_type)
-                    n_cert = len(cert_data.get("parameters", []))
+            # Also count from details as fallback
+            if not (n_pass or n_fail or n_review) and details:
+                n_pass = sum(1 for d in details if d.get("status", "").upper() == "PASS")
+                n_fail = sum(1 for d in details if d.get("status", "").upper() == "FAIL")
+                n_review = sum(1 for d in details if d.get("status", "").upper() == "REVIEW")
+                n_not_in_cert = sum(1 for d in details if d.get("status", "").upper() == "NOT_IN_CERT")
 
-                    # ── Step 4: Compare (AI-powered alignment) ──
-                    progress_bar.progress(80, text="Step 4/4 — AI-powered parameter alignment & comparison...")
-                    comparison = compare_documents(spec_data, cert_data, cert_type=cert_type, model=model)
+            # Overall result banner
+            banner_cls = {
+                "PASS": "alert-success",
+                "FAIL": "alert-error",
+            }.get(overall, "alert-warning")
+            st.markdown(
+                f'<div class="{banner_cls}" style="text-align:center;font-size:1.1rem;padding:1rem;">'
+                f"<strong>Overall Result: {overall}</strong> &nbsp;|&nbsp; "
+                f"{cert_type} &nbsp;|&nbsp; "
+                f"Confidence: {confidence:.0%} &nbsp;|&nbsp; "
+                f"Time: {elapsed:.1f}s"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
 
-                    progress_bar.progress(100, text="✅ Validation complete!")
-                    time.sleep(0.5)
-                    progress_bar.empty()
+            # Summary line
+            st.markdown(
+                f'<div class="alert-info" style="margin-top:0.5rem;">'
+                f"<strong>Product:</strong> {product} &nbsp;&nbsp;|&nbsp;&nbsp; "
+                f"<strong>Certificate:</strong> {cert_product} &nbsp;&nbsp;|&nbsp;&nbsp; "
+                f"<strong>Spec params:</strong> {len(spec_params)} &nbsp;&nbsp;|&nbsp;&nbsp; "
+                f"<strong>Cert params:</strong> {len(cert_params)}"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
 
-                    # ═══════════════════════════════════════════════════
-                    #  RESULTS
-                    # ═══════════════════════════════════════════════════
-                    st.markdown("---")
+            if reason:
+                st.markdown(
+                    f'<div class="alert-warning" style="margin-top:0.3rem;"><strong>Reason:</strong> {reason}</div>',
+                    unsafe_allow_html=True,
+                )
 
-                    # ── Overall Status Badge ──
-                    status = comparison.get("status", "ERROR")
-                    st.markdown(STATUS_BADGE.get(status, ""), unsafe_allow_html=True)
+            # Metric cards
+            m1, m2, m3, m4 = st.columns(4)
+            for col, label, val in [
+                (m1, "PASSED", n_pass),
+                (m2, "FAILED", n_fail),
+                (m3, "REVIEW", n_review),
+                (m4, "NOT IN CERT", n_not_in_cert),
+            ]:
+                col.markdown(
+                    f'<div class="metric-card"><div class="label">{label}</div><div class="value">{val}</div></div>',
+                    unsafe_allow_html=True,
+                )
 
-                    # ── PRODUCT MISMATCH ALERT ──
-                    if comparison.get("product_mismatch"):
-                        cert_prod = comparison.get("cert_product_name", "Unknown")
-                        spec_prod = comparison.get("product_name", "Unknown")
-                        st.markdown(f"""
-                        <div class="alert-critical">
-                            <h4>🚨 PRODUCT MISMATCH DETECTED</h4>
-                            <p>The uploaded certificate is for a <strong>DIFFERENT PRODUCT</strong> than the selected specification.</p>
-                            <p><strong>Specification product:</strong> {spec_prod}</p>
-                            <p><strong>Certificate product:</strong> {cert_prod}</p>
-                            <p>This certificate <strong>cannot be used</strong> to validate this product specification.
-                            Please upload the correct certificate that matches the product.</p>
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                    # ── Summary Metrics ──
-                    st.markdown("#### 📊 Validation Summary")
-                    m1, m2, m3, m4, m5, m6 = st.columns(6)
-                    m1.metric("Parameters Checked", comparison.get("parameters_checked", 0))
-                    m2.metric("✅ Passed", comparison.get("parameters_passed", 0))
-                    m3.metric("❌ Failed", comparison.get("parameters_failed", 0))
-                    m4.metric("🔍 Review", comparison.get("parameters_review", 0))
-                    m5.metric("➖ Not in Cert", comparison.get("parameters_not_in_cert", 0))
-                    m6.metric("Batch No.", comparison.get("batch_number", "—") or "—")
-
-                    # ── Reason ──
-                    reason = comparison.get("reason", "")
-                    if status == "FAIL":
-                        st.markdown(f"""
-                        <div class="alert-critical">
-                            <h4>❌ Certificate REJECTED — Values Outside Specification</h4>
-                            <p>{reason}</p>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    elif status == "REVIEW":
-                        st.markdown(f"""
-                        <div class="alert-warning">
-                            <h4>🔍 Manual Review Required</h4>
-                            <p>{reason}</p>
-                        </div>
-                        """, unsafe_allow_html=True)
+            # Parameter details table
+            if details:
+                st.markdown('<div class="section-header">Parameter Details</div>', unsafe_allow_html=True)
+                rows = ""
+                for d in details:
+                    s = d.get("status", "REVIEW").upper()
+                    badge = status_badge(s)
+                    param = d.get("parameter", "") or d.get("spec_parameter", "—")
+                    # Build spec range from min/max
+                    s_min = d.get("spec_min", "")
+                    s_max = d.get("spec_max", "")
+                    if s_min and s_max:
+                        spec_range = f"{s_min} – {s_max}"
+                    elif s_min:
+                        spec_range = f"Min {s_min}"
+                    elif s_max:
+                        spec_range = f"Max {s_max}"
                     else:
-                        st.markdown(f"""
-                        <div class="alert-success">
-                            <h4>✅ Certificate Verified — All Parameters Within Specification</h4>
-                            <p>{reason}</p>
-                        </div>
-                        """, unsafe_allow_html=True)
+                        spec_range = "—"
+                    spec_val = d.get("spec_value", "—") or "—"
+                    cert_val = d.get("cert_value", "—") or "—"
+                    comment = d.get("reason", "") or ""
+                    rows += f"<tr><td>{badge}</td><td>{param}</td><td>{spec_range}</td><td>{spec_val}</td><td>{cert_val}</td><td>{comment}</td></tr>"
 
-                    # ── Compliance Statement (COCA/COC) ──
-                    comp_statement = comparison.get("compliance_statement", "")
-                    if comp_statement:
-                        st.markdown(f"""
-                        <div class="alert-success">
-                            <h4>📜 Compliance Statement</h4>
-                            <p>{comp_statement}</p>
-                        </div>
-                        """, unsafe_allow_html=True)
+                st.markdown(
+                    f"""
+                <table class="comparison-table">
+                    <thead>
+                        <tr>
+                            <th>Status</th>
+                            <th>Parameter</th>
+                            <th>Spec Range</th>
+                            <th>Spec Value</th>
+                            <th>Cert Value</th>
+                            <th>Reason</th>
+                        </tr>
+                    </thead>
+                    <tbody>{rows}</tbody>
+                </table>
+                """,
+                    unsafe_allow_html=True,
+                )
 
-                    # ── Parameter-by-Parameter Comparison Table ──
-                    details = comparison.get("details", [])
-                    if details:
-                        st.markdown("#### ⚖️ Parameter-by-Parameter Comparison")
+            # Critical failures
+            critical = [d for d in details if d.get("status", "").upper() == "FAIL"]
+            if critical:
+                st.markdown('<div class="section-header">Critical Issues</div>', unsafe_allow_html=True)
+                for d in critical:
+                    st.markdown(
+                        f'<div class="alert-error"><strong>{d.get("parameter","—")}:</strong> '
+                        f'Spec={d.get("spec_value","—")} vs Cert={d.get("cert_value","—")} — '
+                        f'{d.get("reason","")}</div>',
+                        unsafe_allow_html=True,
+                    )
 
-                        param_rows = []
-                        for d in details:
-                            icon = {"PASS": "✅", "FAIL": "❌", "REVIEW": "🔍", "NOT_IN_CERT": "➖"}.get(d.get("status", ""), "")
-                            cert_param_name = d.get("cert_parameter", "")
-                            param_rows.append({
-                                "Status": d.get("status", ""),
-                                " ": icon,
-                                "Spec Parameter": d.get("parameter", ""),
-                                "Matched Cert Parameter": cert_param_name if cert_param_name else "— not found —",
-                                "Spec Min": d.get("spec_min", ""),
-                                "Spec Max": d.get("spec_max", ""),
-                                "Certificate Value": d.get("cert_value", ""),
-                                "Unit": d.get("cert_unit", "") or d.get("spec_unit", ""),
-                                "Verdict": d.get("reason", "—") or "Within spec",
-                            })
+            # Items for review
+            reviews = [d for d in details if d.get("status", "").upper() == "REVIEW"]
+            if reviews:
+                st.markdown('<div class="section-header">Items for Review</div>', unsafe_allow_html=True)
+                for d in reviews:
+                    st.markdown(
+                        f'<div class="alert-warning"><strong>{d.get("parameter","—")}:</strong> '
+                        f'{d.get("reason","")}</div>',
+                        unsafe_allow_html=True,
+                    )
 
-                        param_df = pd.DataFrame(param_rows)
-                        styled_params = param_df.style.apply(_color_param_row, axis=1)
-                        st.dataframe(styled_params, use_container_width=True, height=min(450, 60 + len(param_rows) * 38))
+            # Log result
+            try:
+                log_result(
+                    spec_file=spec_file.name if spec_file else "custom",
+                    cert_file=cert_file.name if cert_file else "unknown",
+                    cert_type=cert_type,
+                    model=MODEL,
+                    classification=classification,
+                    comparison=result,
+                )
+            except Exception:
+                pass
 
-                        # Count issues
-                        fails = [d for d in details if d.get("status") == "FAIL"]
-                        reviews = [d for d in details if d.get("status") == "REVIEW"]
-                        not_in_cert = [d for d in details if d.get("status") == "NOT_IN_CERT"]
-
-                        if fails:
-                            st.markdown("#### 🚨 Critical Issues — Values Outside Specification")
-                            for f in fails:
-                                st.error(f"**{f['parameter']}**: {f['reason']}")
-
-                        if reviews:
-                            st.markdown("#### ⚠️ Items Requiring Review")
-                            for r in reviews:
-                                st.warning(f"**{r['parameter']}**: {r['reason']}")
-
-                        if not_in_cert:
-                            st.markdown("#### ➖ Parameters Not Found in Certificate")
-                            st.info("These spec parameters are not tested in the certificate (e.g., visual inspection items). They require separate verification.")
-                            for n in not_in_cert:
-                                st.caption(f"• {n['parameter']}: {n.get('reason', 'Not found in certificate')}")
-
-                    # ── Side-by-Side Extracted Data ──
-                    st.markdown("---")
-                    with st.expander("📋 View Full Extracted Data (JSON)", expanded=False):
-                        json_col1, json_col2 = st.columns(2)
-                        with json_col1:
-                            st.markdown("**Specification Data**")
-                            st.json(spec_data)
-                        with json_col2:
-                            st.markdown("**Certificate Data**")
-                            st.json(cert_data)
-
-                except Exception as e:
-                    progress_bar.empty()
-                    st.markdown(STATUS_BADGE.get("ERROR", ""), unsafe_allow_html=True)
-                    st.markdown(f"""
-                    <div class="alert-critical">
-                        <h4>⚠️ Processing Error</h4>
-                        <p><strong>{type(e).__name__}:</strong> {str(e)}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    st.exception(e)
-    else:
-        st.info("👆 Upload both a **Product Specification** and a **Supplier Certificate** above, then click **Validate Certificate**.")
-
-
-# ─────────────────────────────────────────────────────────────────────
-#  TAB 2: BATCH PROCESSING
-# ─────────────────────────────────────────────────────────────────────
-with tab_batch:
-    st.markdown("## 📦 Batch Processing")
-    st.markdown("Process all mapped product-certificate pairs from the IXOM catalog at once.")
-
-    if config.MAPPING_FILE.exists():
-        mapping = pd.read_excel(config.MAPPING_FILE)
-        st.markdown(f"**{len(mapping)} products** configured in mapping file")
-
-        display_mapping = mapping[["SN", "Industry", "Material_Number", "Spec_File", "COA_File", "COCA_File", "COC_File"]].copy()
-        display_mapping = display_mapping.fillna("—")
-        st.dataframe(display_mapping, use_container_width=True, height=400)
-
-        batch_col1, batch_col2 = st.columns(2)
-        with batch_col1:
-            batch_model = st.selectbox("Model for batch", config.AVAILABLE_MODELS, key="batch_model")
-        with batch_col2:
-            batch_mode = st.radio("Processing mode", ["Golden Test (3 pairs)", "Full Batch (all)"], horizontal=True)
-
-        if st.button("🚀 Run Batch Processing", type="primary"):
-            st.warning("⏳ For reliability, batch processing runs via the terminal:")
-            if batch_mode.startswith("Golden"):
-                st.code(f"cd {PROJECT_ROOT}\npython main.py --golden-test --model {batch_model}", language="bash")
-            else:
-                st.code(f"cd {PROJECT_ROOT}\npython main.py --model {batch_model}", language="bash")
-            st.info("After the batch completes, switch to the **Audit History** tab to view all results.")
-    else:
-        st.warning("Mapping file not found. Run `python build_mapping.py` first.")
-
-
-# ─────────────────────────────────────────────────────────────────────
-#  TAB 3: AUDIT HISTORY
-# ─────────────────────────────────────────────────────────────────────
+# =====================================================================
+# TAB 2 — AUDIT HISTORY
+# =====================================================================
 with tab_history:
-    st.markdown("## 📊 Audit Log History")
+    st.markdown('<div class="section-header">Audit History</div>', unsafe_allow_html=True)
 
-    if AUDIT_LOG.exists():
-        log = pd.read_csv(AUDIT_LOG)
-
-        if not log.empty:
-            total = len(log)
-            passed = len(log[log["Status"] == "PASS"])
-            failed = len(log[log["Status"] == "FAIL"])
-            review = len(log[log["Status"] == "REVIEW"])
-            errors = len(log[log["Status"] == "ERROR"])
-
-            h1, h2, h3, h4, h5 = st.columns(5)
-            h1.metric("Total Processed", total)
-            h2.metric("✅ Passed", passed, delta=f"{passed/total*100:.0f}%" if total else "0%")
-            h3.metric("❌ Failed", failed)
-            h4.metric("🔍 Review", review)
-            h5.metric("⚠️ Errors", errors)
-
-            st.markdown("---")
-            f1, f2, f3 = st.columns(3)
-            with f1:
-                hist_status = st.selectbox("Filter Status", ["ALL"] + sorted(log["Status"].dropna().unique().tolist()), key="hist_status")
-            with f2:
-                cert_opts = ["ALL"]
-                if "Cert_Type" in log.columns:
-                    cert_opts += sorted(log["Cert_Type"].dropna().unique().tolist())
-                hist_cert = st.selectbox("Filter Cert Type", cert_opts, key="hist_cert")
-            with f3:
-                model_opts = ["ALL"]
-                if "Model" in log.columns:
-                    model_opts += sorted(log["Model"].dropna().unique().tolist())
-                hist_model = st.selectbox("Filter Model", model_opts, key="hist_model")
-
-            filtered = log.copy()
-            if hist_status != "ALL":
-                filtered = filtered[filtered["Status"] == hist_status]
-            if hist_cert != "ALL":
-                filtered = filtered[filtered["Cert_Type"] == hist_cert]
-            if hist_model != "ALL":
-                filtered = filtered[filtered["Model"] == hist_model]
-
-            display_cols = [c for c in [
-                "Timestamp", "Spec_File", "Cert_File", "Cert_Type", "Status",
-                "Product_Name", "Material_Number", "Batch_Number", "Confidence",
-                "Parameters_Checked", "Parameters_Passed", "Parameters_Failed",
-                "Parameters_Missing", "Reason",
-            ] if c in filtered.columns]
-
-            def _hist_color(val):
-                color_map = {
-                    "PASS": ("#1b3a1b", "#81c784"),
-                    "FAIL": ("#4a1a1a", "#ff8a80"),
-                    "REVIEW": ("#3e3518", "#ffd54f"),
-                    "ERROR": ("#3a1a1a", "#ff6b6b"),
-                }
-                pair = color_map.get(val)
-                return f"background-color: {pair[0]}; color: {pair[1]}; font-weight: bold;" if pair else ""
-
-            styled = filtered[display_cols].style.map(_hist_color, subset=["Status"] if "Status" in display_cols else [])
-            st.dataframe(styled, use_container_width=True, height=400)
-            st.caption(f"Showing {len(filtered)} of {total} records")
-
-            st.markdown("---")
-            st.markdown("#### 🔍 Inspect Result")
-            if not filtered.empty:
-                options = []
-                for idx, row in filtered.iterrows():
-                    icon = {"PASS": "✅", "FAIL": "❌", "REVIEW": "🔍", "ERROR": "⚠️"}.get(row.get("Status", ""), "")
-                    options.append(f"{icon} {row.get('Spec_File', '')} ↔ {row.get('Cert_File', '')} ({row.get('Cert_Type', '')})")
-
-                selected = st.selectbox("Select a record:", options, key="hist_select")
-                sel_idx = options.index(selected)
-                sel_row = filtered.iloc[sel_idx]
-
-                d1, d2 = st.columns(2)
-                with d1:
-                    st.markdown("**Specification Extracted Data**")
-                    spec_stem = Path(str(sel_row.get("Spec_File", ""))).stem
-                    spec_json = JSON_DIR / f"{spec_stem}_spec.json"
-                    if spec_json.exists():
-                        with open(spec_json) as f:
-                            st.json(json.load(f))
-                    else:
-                        st.info("No extracted JSON available")
-
-                with d2:
-                    st.markdown("**Certificate Extracted Data**")
-                    cert_stem = Path(str(sel_row.get("Cert_File", ""))).stem
-                    ct = str(sel_row.get("Cert_Type", "coa")).lower()
-                    cert_json = JSON_DIR / f"{cert_stem}_{ct}.json"
-                    if cert_json.exists():
-                        with open(cert_json) as f:
-                            st.json(json.load(f))
-                    else:
-                        st.info("No extracted JSON available")
-
-                st.markdown(f"""
-                **Status:** {sel_row.get('Status', '')} | **Reason:** {sel_row.get('Reason', 'N/A')} |
-                **Model:** {sel_row.get('Model', '')} | **Confidence:** {sel_row.get('Confidence', '')}
-                """)
-        else:
-            st.info("Audit log is empty. Run a validation first.")
+    log_path = str(config.AUDIT_LOG)
+    if not os.path.exists(log_path):
+        st.markdown(
+            '<div class="alert-info">No audit records yet. Validate a certificate to create the first entry.</div>',
+            unsafe_allow_html=True,
+        )
     else:
-        st.info("No audit log yet. Validate a certificate or run a batch to create one.")
+        import pandas as pd
 
+        df = pd.read_csv(log_path)
 
-# ═══════════════════════════════════════════════════════════════════════
-#  FOOTER
-# ═══════════════════════════════════════════════════════════════════════
-st.markdown("---")
-st.markdown("""
-<div style="text-align: center; color: #aaa; font-size: 0.85rem;">
-    Intelligent Safety Net v0.1 — Phase 0 PoC | IXOM Product Safety Verification<br>
-    Powered by GPT-4o Vision | Built with Streamlit
+        # Filters
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
+            statuses = ["ALL"] + sorted(df["Status"].dropna().unique().tolist()) if "Status" in df.columns else ["ALL"]
+            sel_status = st.selectbox("Filter by Status", statuses)
+        with col_f2:
+            cert_types = ["ALL"] + sorted(df["Cert_Type"].dropna().unique().tolist()) if "Cert_Type" in df.columns else ["ALL"]
+            sel_cert = st.selectbox("Filter by Cert Type", cert_types)
+
+        filtered = df.copy()
+        if sel_status != "ALL" and "Status" in filtered.columns:
+            filtered = filtered[filtered["Status"] == sel_status]
+        if sel_cert != "ALL" and "Cert_Type" in filtered.columns:
+            filtered = filtered[filtered["Cert_Type"] == sel_cert]
+
+        # Drop Model column if present
+        if "Model" in filtered.columns:
+            filtered = filtered.drop(columns=["Model"])
+
+        # Metrics
+        total = len(filtered)
+        n_p = len(filtered[filtered["Status"] == "PASS"]) if "Status" in filtered.columns else 0
+        n_f = len(filtered[filtered["Status"] == "FAIL"]) if "Status" in filtered.columns else 0
+        n_r = len(filtered[filtered["Status"] == "REVIEW"]) if "Status" in filtered.columns else 0
+
+        mc1, mc2, mc3, mc4 = st.columns(4)
+        for col, lbl, v in [(mc1, "TOTAL", total), (mc2, "PASSED", n_p), (mc3, "FAILED", n_f), (mc4, "REVIEW", n_r)]:
+            col.markdown(
+                f'<div class="metric-card"><div class="label">{lbl}</div><div class="value">{v}</div></div>',
+                unsafe_allow_html=True,
+            )
+
+        st.markdown(f"<br><small>Showing {len(filtered)} of {len(df)} records</small>", unsafe_allow_html=True)
+        st.dataframe(filtered, use_container_width=True, hide_index=True)
+
+# ── Footer ──────────────────────────────────────────────────────────────
+st.markdown(
+    """
+<div style="text-align:center; color:#475569; font-size:0.7rem; margin-top:2rem; padding-top:0.8rem; border-top:1px solid rgba(255,255,255,0.05);">
+    Intelligent Document Verification | Powered by GPT-4o Vision
 </div>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
