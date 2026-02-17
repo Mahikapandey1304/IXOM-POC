@@ -1,0 +1,29 @@
+# Intelligent Safety Net — .gitignore
+
+# Environment
+.env
+*.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# Outputs (large/generated)
+outputs/structured_json/*.json
+logs/*.csv
+
+# Data (keep mapping, ignore PDFs)
+data/specs/*.pdf
+data/certificates/*.pdf
+
+# OS
+Thumbs.db
+.DS_Store
