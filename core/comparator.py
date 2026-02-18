@@ -21,6 +21,7 @@ from core.unit_normalizer import (
     are_units_compatible,
     convert_value,
 )
+from core.retry_config import retry_openai_call
 
 client = OpenAI(api_key=config.OPENAI_API_KEY)
 
@@ -310,14 +311,17 @@ def _ai_compare(spec_data: dict, cert_data: dict, cert_type: str = "COA", model:
         extra_instructions=extra,
     )
 
-    response = client.chat.completions.create(
-        model=model,
-        temperature=config.TEMPERATURE,
-        max_tokens=4096,
-        messages=[{"role": "user", "content": prompt}],
-        response_format={"type": "json_object"},
-    )
-
+    @retry_openai_call
+    def _call_openai():
+        return client.chat.completions.create(
+            model=model,
+            temperature=config.TEMPERATURE,
+            max_tokens=4096,
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+        )
+    
+    response = _call_openai()
     result_text = response.choices[0].message.content.strip()
 
     try:

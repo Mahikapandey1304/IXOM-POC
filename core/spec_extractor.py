@@ -7,9 +7,12 @@ Uses GPT-4o Vision to read tables and extract parameters into the fixed JSON sch
 import json
 from pathlib import Path
 from openai import OpenAI
+from pydantic import ValidationError
 
 import config
 from core.pdf_renderer import pdf_to_base64_images
+from core.retry_config import retry_openai_call, retry_file_io
+from core.schemas import SpecificationSchema
 
 client = OpenAI(api_key=config.OPENAI_API_KEY)
 
@@ -94,20 +97,23 @@ def extract_spec(pdf_path: str, model: str = None) -> dict:
             },
         })
 
-    response = client.chat.completions.create(
-        model=model,
-        temperature=config.TEMPERATURE,
-        max_tokens=4096,
-        messages=[{"role": "user", "content": content}],
-        response_format={"type": "json_object"},
-    )
-
+    @retry_openai_call
+    def _call_openai():
+        return client.chat.completions.create(
+            model=model,
+            temperature=config.TEMPERATURE,
+            max_tokens=4096,
+            messages=[{"role": "user", "content": content}],
+            response_format={"type": "json_object"},
+        )
+    
+    response = _call_openai()
     result_text = response.choices[0].message.content.strip()
 
     try:
-        result = json.loads(result_text)
+        result_dict = json.loads(result_text)
     except json.JSONDecodeError:
-        result = {
+        result_dict = {
             "document_type": "Product_Specification",
             "product_name": "",
             "material_number": "",
@@ -116,18 +122,31 @@ def extract_spec(pdf_path: str, model: str = None) -> dict:
             "error": f"Failed to parse: {result_text[:200]}",
         }
 
-    # Ensure required fields exist
-    result.setdefault("document_type", "Product_Specification")
-    result.setdefault("product_name", "")
-    result.setdefault("material_number", "")
-    result.setdefault("confidence_score", 0.0)
-    result.setdefault("parameters", [])
+    # Validate with Pydantic schema
+    try:
+        validated = SpecificationSchema(**result_dict)
+        result = validated.model_dump()
+    except ValidationError as e:
+        # Log validation error but continue with best-effort result
+        print(f"Schema validation warning in extract_spec: {e}")
+        # Ensure required fields exist
+        result_dict.setdefault("document_type", "Product_Specification")
+        result_dict.setdefault("product_name", "")
+        result_dict.setdefault("material_number", "")
+        result_dict.setdefault("confidence_score", 0.0)
+        result_dict.setdefault("parameters", [])
+        result = result_dict
 
     # Save extracted JSON
     output_name = Path(pdf_path).stem + "_spec.json"
     output_path = config.JSON_OUTPUT_DIR / output_name
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(result, f, indent=2, ensure_ascii=False)
+    
+    @retry_file_io
+    def _save_json():
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, indent=2, ensure_ascii=False)
+    
+    _save_json()
 
     return result
 

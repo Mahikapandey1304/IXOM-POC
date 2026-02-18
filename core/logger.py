@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Dict
 
 import config
+from core.retry_config import retry_file_io
 
 # ─── CSV Column Headers ──────────────────────────────────────────────
 AUDIT_COLUMNS = [
@@ -37,9 +38,14 @@ def _ensure_audit_log():
     """Create audit log file with headers if it doesn't exist."""
     if not config.AUDIT_LOG.exists():
         config.AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
-        with open(config.AUDIT_LOG, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(AUDIT_COLUMNS)
+        
+        @retry_file_io
+        def _create_log():
+            with open(config.AUDIT_LOG, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(AUDIT_COLUMNS)
+        
+        _create_log()
 
 
 def log_result(
@@ -84,9 +90,13 @@ def log_result(
         comparison.get("parameters_review", 0),
     ]
 
-    with open(config.AUDIT_LOG, "a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(row)
+    @retry_file_io
+    def _write_row():
+        with open(config.AUDIT_LOG, "a", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(row)
+    
+    _write_row()
 
     # Also print to console
     status = comparison.get("status", "ERROR")
@@ -123,9 +133,13 @@ def log_error(
         0, 0, 0, 0,
     ]
 
-    with open(config.AUDIT_LOG, "a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(row)
+    @retry_file_io
+    def _write_row():
+        with open(config.AUDIT_LOG, "a", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(row)
+    
+    _write_row()
 
     print(f"  ⚠️ [ERROR] {spec_file} ↔ {cert_file}: {error_msg[:100]}")
 
@@ -144,25 +158,29 @@ def write_run_summary(results: list, model: str) -> str:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     summary_path = config.LOGS_DIR / f"run_summary_{timestamp}.csv"
 
-    with open(summary_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["Run Summary", f"Model: {model}", f"Time: {timestamp}"])
-        writer.writerow([])
-        writer.writerow(["Metric", "Count"])
+    @retry_file_io
+    def _write_summary():
+        with open(summary_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Run Summary", f"Model: {model}", f"Time: {timestamp}"])
+            writer.writerow([])
+            writer.writerow(["Metric", "Count"])
 
-        total = len(results)
-        passed = sum(1 for r in results if r.get("status") == "PASS")
-        failed = sum(1 for r in results if r.get("status") == "FAIL")
-        review = sum(1 for r in results if r.get("status") == "REVIEW")
-        errors = sum(1 for r in results if r.get("status") == "ERROR")
+            total = len(results)
+            passed = sum(1 for r in results if r.get("status") == "PASS")
+            failed = sum(1 for r in results if r.get("status") == "FAIL")
+            review = sum(1 for r in results if r.get("status") == "REVIEW")
+            errors = sum(1 for r in results if r.get("status") == "ERROR")
 
-        writer.writerow(["Total Processed", total])
-        writer.writerow(["Passed", passed])
-        writer.writerow(["Failed", failed])
-        writer.writerow(["Review Required", review])
-        writer.writerow(["Errors", errors])
-        writer.writerow([])
-        writer.writerow(["Pass Rate", f"{passed/total*100:.1f}%" if total else "N/A"])
+            writer.writerow(["Total Processed", total])
+            writer.writerow(["Passed", passed])
+            writer.writerow(["Failed", failed])
+            writer.writerow(["Review Required", review])
+            writer.writerow(["Errors", errors])
+            writer.writerow([])
+            writer.writerow(["Pass Rate", f"{passed/total*100:.1f}%" if total else "N/A"])
+    
+    _write_summary()
 
     return str(summary_path)
 

@@ -28,6 +28,7 @@ from core.spec_extractor import extract_spec
 from core.cert_extractor import extract_certificate
 from core.comparator import compare_documents
 from core.logger import log_result, log_error, write_run_summary, print_summary
+from core.retry_config import retry_file_io
 
 
 def resolve_pdf_path(filename: str, is_spec: bool = False) -> str:
@@ -146,7 +147,11 @@ def main():
         print("   Run: python build_mapping.py")
         sys.exit(1)
 
-    mapping = pd.read_excel(config.MAPPING_FILE)
+    @retry_file_io
+    def _load_mapping():
+        return pd.read_excel(config.MAPPING_FILE)
+    
+    mapping = _load_mapping()
     print(f"\n  Loaded {len(mapping)} product rows from mapping")
 
     # Filter rows based on CLI flags

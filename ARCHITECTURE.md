@@ -106,6 +106,9 @@ The system follows a five-stage sequential pipeline architecture. Each PDF docum
 | Data Handling      | pandas + openpyxl | 2.0+      | Mapping file, audit log, data frames            |
 | Environment Config | python-dotenv     | 1.0+      | API key and settings management                 |
 | API Client         | openai (Python)   | 1.0+      | GPT-4o API communication                        |
+| **Schema Validation** | **pydantic**   | **2.0+**  | **Data structure validation and type safety**   |
+| **Retry Logic**    | **tenacity**      | **8.0+**  | **Automatic retry for transient failures**      |
+| **Testing**        | **pytest**        | **7.0+**  | **Unit testing and coverage reporting**         |
 
 ### 3.3 Design Principles
 
@@ -118,6 +121,11 @@ The system follows a five-stage sequential pipeline architecture. Each PDF docum
 **Deterministic Inference.** All LLM calls use temperature 0.0 to ensure reproducible results across runs.
 
 **Structured Output Enforcement.** All LLM calls use JSON response format (`response_format: json_object`) to guarantee parseable output, eliminating markdown or prose in API responses.
+
+**Production Hardening.** All critical operations are protected with schema validation and automatic retry logic:
+- **Schema Validation**: All structured data (classifications, extractions, comparisons) is validated using Pydantic models to ensure data integrity and catch malformed LLM responses early
+- **Retry Logic**: All OpenAI API calls, file I/O operations, and PDF processing include automatic retry with exponential backoff to handle transient failures (rate limits, network issues, file locks)
+- **Graceful Degradation**: Validation failures are logged but don't crash the system; best-effort results with defaults are used when possible
 
 ---
 
@@ -159,6 +167,10 @@ The final image is saved to an in-memory buffer as PNG format and encoded to bas
 - Rendering time: under 1 second per page
 - All 34 PDFs in the test set render without errors
 
+**Production Hardening:**
+
+PDF loading operations are wrapped with `@retry_pdf_operation` decorator (see Section 5.6) to handle corrupted or temporarily locked PDF files. The decorator retries up to 2 times with a 2-second wait between attempts before raising the original exception.
+
 ---
 
 ### 4.2 Stage 2: Document Classification
@@ -190,6 +202,11 @@ The classifier uses the `detail: high` setting for the image, which costs more t
 | Other                  | Any unrecognized document type                             |
 
 **Observed Accuracy:** 0.95 confidence score across all tested documents. No misclassifications observed in the test set.
+
+**Production Hardening:**
+
+- **Retry Logic:** OpenAI API calls are wrapped with `@retry_openai_call` decorator (see Section 5.6) to handle rate limits (429 errors), connection failures, and timeouts. Retries up to 3 times with exponential backoff (1s, 2s, 4s).
+- **Schema Validation:** The classifier output is validated against `ClassificationSchema` (see Section 5.5) to ensure `confidence_score` is between 0.0 and 1.0, `document_type` is a valid enum value, and all required fields are present.
 
 ---
 
@@ -236,6 +253,11 @@ All pages of the specification PDF are sent to GPT-4o Vision with a domain-speci
 
 Numeric parameters have `min_limit` and/or `max_limit` populated with the value field empty. Qualitative parameters have `value` populated with the limits empty.
 
+**Production Hardening (Specification Extractor):**
+
+- **Retry Logic:** OpenAI API calls wrapped with `@retry_openai_call`, JSON file saves wrapped with `@retry_file_io` (see Section 5.6)
+- **Schema Validation:** Output validated against `SpecificationSchema` (see Section 5.5) to ensure parameter count matches list length, confidence score is bounded, and all required fields are populated
+
 #### 4.3.2 Certificate Extractor
 
 The certificate extractor uses two distinct prompts depending on the certificate type:
@@ -267,6 +289,11 @@ The certificate extractor uses two distinct prompts depending on the certificate
   ]
 }
 ```
+
+**Production Hardening (Certificate Extractor):**
+
+- **Retry Logic:** OpenAI API calls wrapped with `@retry_openai_call`, JSON file saves wrapped with `@retry_file_io` (see Section 5.6)
+- **Schema Validation:** Output validated against `CertificateSchema` (see Section 5.5) to ensure parameter count matches list length, confidence score is bounded, and all required fields are populated
 
 ---
 
@@ -385,6 +412,11 @@ If the AI comparison call fails (API error, timeout, rate limit), the system fal
 
 This fallback produces lower accuracy (because it cannot handle name differences) but ensures the pipeline never completely fails due to a transient API issue.
 
+**Production Hardening:**
+
+- **Retry Logic:** OpenAI API comparison calls wrapped with `@retry_openai_call` decorator (see Section 5.6)
+- **Schema Validation:** Comparison results validated against `ComparisonSchema` and `ParameterComparisonSchema` (see Section 5.5) to ensure status enums are valid, counts are consistent, and required fields are present
+
 ---
 
 ### 4.5 Stage 5: Audit Logging
@@ -415,6 +447,10 @@ This fallback produces lower accuracy (because it cannot handle name differences
 | Parameters_Missing  | Integer  | Count of REVIEW parameters           |
 
 The audit log is append-only. Each run also generates a per-run summary CSV file containing aggregate counts and pass rate.
+
+**Production Hardening:**
+
+All CSV file operations (read, write, append) are wrapped with `@retry_file_io` decorator (see Section 5.6) to handle temporary file locks, permission errors, and disk I/O issues. Retries up to 3 times with 1-second wait between attempts.
 
 ---
 
@@ -507,6 +543,94 @@ The mapping contains 15 rows (products) across 3 industries. Each row specifies:
 | COC_File        | Certificate of Conformance PDF filename |
 
 Not every product has all three certificate types. Empty cells indicate that no certificate of that type exists for the product.
+
+### 5.5 Schema Validation
+
+**Module:** `core/schemas.py`
+
+**Purpose:** Provide Pydantic-based data validation models to ensure data integrity throughout the extraction and comparison pipeline.
+
+**Capabilities:**
+
+The schema validation module defines seven Pydantic models that enforce type safety, value constraints, and structural consistency:
+
+**Core Data Models:**
+
+| Schema                      | Purpose                                    | Key Validations                                      |
+|-----------------------------|-------------------------------------------|-----------------------------------------------------|
+| ParameterSchema             | Individual parameter in spec/cert         | Non-empty name, confidence 0.0-1.0                  |
+| ClassificationSchema        | Document type classification              | Valid doc_type enum, confidence bounds              |
+| SpecificationSchema         | Complete specification extraction         | Parameter count matches list length                 |
+| CertificateSchema           | Complete certificate extraction           | Parameter count matches list length                 |
+| ComparisonSchema            | Overall validation result                 | Status enum, counts consistent with details         |
+| ParameterComparisonSchema   | Single parameter comparison               | Status enum, at least one field present            |
+| AuditLogSchema              | Audit trail entry                         | Valid timestamp, non-empty product name            |
+
+**Validation Features:**
+
+- **Type Enforcement:** All fields have explicit types (str, float, int, Optional, List, Enum)
+- **Value Constraints:** Confidence scores bounded to [0.0, 1.0], counts must be non-negative
+- **Structural Consistency:** Model validators ensure parameter counts match actual list lengths
+- **Enum Safety:** Classification doc_type and comparison status use typed enums (no invalid strings)
+- **Optional Field Handling:** Graceful handling of missing data (compliance_text, product_name, etc.)
+
+**Integration Points:**
+
+All extractors and the comparator use these schemas to validate their output before returning data:
+
+```python
+# Example from cert_extractor.py
+validated_data = CertificateSchema(**parsed_data)
+```
+
+If validation fails, a `ValidationError` is raised with detailed field-level error messages, preventing corrupted data from propagating through the pipeline.
+
+### 5.6 Retry Logic
+
+**Module:** `core/retry_config.py`
+
+**Purpose:** Provide resilient retry decorators for handling transient failures in API calls, file I/O, and PDF operations.
+
+**Capabilities:**
+
+Three specialized retry decorators using the `tenacity` library with exponential backoff:
+
+**Retry Decorators:**
+
+| Decorator             | Max Attempts | Backoff Strategy        | Target Failures                               |
+|----------------------|--------------|------------------------|-----------------------------------------------|
+| @retry_openai_call   | 3            | Exponential 1-10s      | RateLimitError, APIConnectionError, Timeout   |
+| @retry_file_io       | 3            | Fixed 1s wait          | IOError, OSError, PermissionError             |
+| @retry_pdf_operation | 2            | Fixed 2s wait          | All exceptions (PDF loading failures)         |
+
+**Retry Features:**
+
+- **Automatic Retry:** Transient failures trigger automatic retries without code changes
+- **Exponential Backoff:** OpenAI calls use `2^x` second delays (1s, 2s, 4s) to handle rate limits
+- **Comprehensive Logging:** Each retry attempt is logged with attempt number and exception details
+- **Graceful Failure:** After exhausting retries, original exception is raised with full context
+
+**Integration Points:**
+
+Retry decorators are applied to all external dependency interactions across 7 core modules:
+
+- **OpenAI API Calls:** cert_extractor (2 calls), spec_extractor (2 calls), document_classifier (1 call), comparator (1 call)
+- **File I/O Operations:** cert_extractor (JSON save), spec_extractor (JSON save), logger (all CSV operations)
+- **PDF Operations:** pdf_renderer (PDF loading), main.py (Excel reading)
+
+**Example Usage:**
+
+```python
+@retry_openai_call
+def call_openai_api(self, messages, response_format):
+    return self.client.chat.completions.create(...)
+```
+
+This ensures production stability by automatically recovering from:
+- OpenAI API rate limits (429 errors)
+- Temporary network failures
+- File system locks or permission issues
+- Corrupted/inaccessible PDF files
 
 ---
 

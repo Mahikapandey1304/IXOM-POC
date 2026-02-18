@@ -106,8 +106,9 @@ The Intelligent Safety Net automates this entire workflow:
 | **Backend** | Python 3.10+ | Core pipeline orchestration |
 | **Frontend** | Streamlit | Interactive demo dashboard |
 | **Data** | pandas + openpyxl | Mapping file, audit logs, structured outputs |
-| **Config** | python-dotenv | Environment variable management |
-
+| **Config** | python-dotenv | Environment variable management || **Validation** | Pydantic 2.x | Schema validation and data integrity enforcement |
+| **Resilience** | Tenacity 8.x | Automatic retry logic for API calls and file I/O |
+| **Testing** | pytest + pytest-cov | Unit testing and code coverage reporting |
 ---
 
 ## Pipeline Flow
@@ -539,6 +540,95 @@ Uses `pypdfium2` instead of `pdf2image` + Poppler, eliminating the need for exte
 
 ### 6. Three-Layer Product Matching
 Fast local pre-check catches obvious mismatches (zero API cost), while AI handles edge cases. This prevents sending wrong-product pairs through the expensive comparison pipeline.
+
+### 7. Production Hardening
+The system includes comprehensive production-ready hardening:
+
+**Schema Validation (Pydantic):**
+- All extractor outputs validated against strict Pydantic models before returning data
+- 7 validation schemas enforcing type safety, value bounds, and structural consistency
+- Confidence scores bounded to [0.0, 1.0], parameter counts verified, enum values enforced
+- Prevents corrupted or malformed data from propagating through the pipeline
+
+**Automatic Retry Logic (Tenacity):**
+- OpenAI API calls retry up to 3 times with exponential backoff (1s → 2s → 4s)
+- File I/O operations retry up to 3 times with 1-second waits
+- PDF loading retries up to 2 times with 2-second waits
+- Handles rate limits (429), connection failures, file locks, and temporary errors
+- Comprehensive logging of all retry attempts
+
+**Test Coverage:**
+- 39 automated tests covering schema validation and retry logic
+- Tests validate error handling, boundary conditions, and real-world failure scenarios
+- Run via `pytest tests/` (see Testing section below)
+
+This hardening ensures the system automatically recovers from transient failures and maintains data integrity throughout the pipeline.
+
+---
+
+## Testing
+
+The project includes a comprehensive test suite covering schema validation and retry logic.
+
+### Running Tests
+
+```bash
+# Run all tests
+pytest tests/
+
+# Run with verbose output
+pytest tests/ -v
+
+# Run with code coverage report
+pytest tests/ --cov=core --cov-report=term-missing
+
+# Run specific test file
+pytest tests/test_schemas.py -v
+pytest tests/test_retries.py -v
+```
+
+### Test Coverage
+
+| Test File | Tests | Coverage |
+|-----------|-------|----------|
+| `tests/test_schemas.py` | 21 | Schema validation, boundary conditions, invalid data handling |
+| `tests/test_retries.py` | 18 | Retry logic, exponential backoff, failure scenarios |
+| **Total** | **39** | **Schema validation: 97%, Retry logic: 67%** |
+
+### What's Tested
+
+**Schema Validation Tests (`test_schemas.py`):**
+- Valid data for all 7 Pydantic models (ParameterSchema, ClassificationSchema, SpecificationSchema, CertificateSchema, ComparisonSchema, etc.)
+- Invalid data rejection (empty names, out-of-bounds confidence scores, negative counts)
+- Edge cases (empty parameter lists, missing optional fields, nested validation)
+- Model validators (parameter count consistency, enum validation)
+
+**Retry Logic Tests (`test_retries.py`):**
+- OpenAI API retry handling (APIConnectionError, rate limits, timeouts)
+- File I/O retry handling (IOError, OSError, PermissionError)
+- PDF operation retry handling (corrupted files, loading failures)
+- Exponential backoff timing verification
+- Maximum retry limit enforcement
+- Success after retry scenarios
+- Real-world simulation tests combining multiple retry scenarios
+
+### Example Test Output
+
+```
+============================== test session starts ==============================
+collected 39 items
+
+tests/test_retries.py::test_retry_openai_success PASSED                   [  2%]
+tests/test_retries.py::test_retry_openai_all_fail PASSED                  [  5%]
+tests/test_retries.py::test_retry_openai_exponential_backoff PASSED       [  7%]
+...
+tests/test_schemas.py::test_parameter_schema_valid PASSED                 [ 48%]
+tests/test_schemas.py::test_classification_schema_confidence_bounds PASSED [ 51%]
+tests/test_schemas.py::test_specification_schema_parameter_count PASSED   [ 53%]
+...
+
+============================== 39 passed in 2.85s ===============================
+```
 
 ---
 

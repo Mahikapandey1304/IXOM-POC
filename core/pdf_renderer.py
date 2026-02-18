@@ -11,6 +11,13 @@ from PIL import Image
 import pypdfium2 as pdfium
 
 import config
+from core.retry_config import retry_pdf_operation
+
+
+@retry_pdf_operation
+def _load_pdf_document(pdf_path: str) -> pdfium.PdfDocument:
+    """Load a PDF document with retry logic for transient failures."""
+    return pdfium.PdfDocument(pdf_path)
 
 
 def pdf_page_to_base64(pdf_path: str, page_num: int = 0, dpi: int = None) -> str:
@@ -18,7 +25,7 @@ def pdf_page_to_base64(pdf_path: str, page_num: int = 0, dpi: int = None) -> str
     dpi = dpi or config.IMAGE_DPI
     scale = dpi / 72  # pypdfium2 uses 72 DPI as base
 
-    pdf = pdfium.PdfDocument(pdf_path)
+    pdf = _load_pdf_document(pdf_path)
     if page_num >= len(pdf):
         raise ValueError(f"Page {page_num} out of range (doc has {len(pdf)} pages)")
 
@@ -42,7 +49,7 @@ def pdf_to_base64_images(pdf_path: str, dpi: int = None, max_pages: int = None) 
     max_pages = max_pages or config.MAX_PAGES_PER_DOC
     scale = dpi / 72
 
-    pdf = pdfium.PdfDocument(pdf_path)
+    pdf = _load_pdf_document(pdf_path)
     n_pages = min(len(pdf), max_pages)
 
     result = []
@@ -64,7 +71,7 @@ def pdf_to_base64_images(pdf_path: str, dpi: int = None, max_pages: int = None) 
 
 def get_page_count(pdf_path: str) -> int:
     """Get the number of pages in a PDF."""
-    pdf = pdfium.PdfDocument(pdf_path)
+    pdf = _load_pdf_document(pdf_path)
     count = len(pdf)
     pdf.close()
     return count

@@ -8,9 +8,12 @@ Returns dict with document_type and confidence_score.
 import json
 from pathlib import Path
 from openai import OpenAI
+from pydantic import ValidationError
 
 import config
 from core.pdf_renderer import pdf_page_to_base64
+from core.retry_config import retry_openai_call
+from core.schemas import ClassificationSchema
 
 client = OpenAI(api_key=config.OPENAI_API_KEY)
 
@@ -51,41 +54,56 @@ def classify_document(pdf_path: str, model: str = None) -> dict:
     # Convert first page to image
     img_b64 = pdf_page_to_base64(pdf_path, page_num=0)
 
-    response = client.chat.completions.create(
-        model=model,
-        temperature=config.TEMPERATURE,
-        max_tokens=500,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": CLASSIFICATION_PROMPT},
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/png;base64,{img_b64}",
-                            "detail": "high",
+    @retry_openai_call
+    def _call_openai():
+        return client.chat.completions.create(
+            model=model,
+            temperature=config.TEMPERATURE,
+            max_tokens=500,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": CLASSIFICATION_PROMPT},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{img_b64}",
+                                "detail": "high",
+                            },
                         },
-                    },
-                ],
-            }
-        ],
-        response_format={"type": "json_object"},
-    )
-
+                    ],
+                }
+            ],
+            response_format={"type": "json_object"},
+        )
+    
+    response = _call_openai()
     result_text = response.choices[0].message.content.strip()
 
     try:
-        result = json.loads(result_text)
+        result_dict = json.loads(result_text)
     except json.JSONDecodeError:
-        result = {
+        result_dict = {
             "document_type": "Other",
             "confidence_score": 0.0,
             "product_name": "",
             "reasoning": f"Failed to parse response: {result_text[:200]}",
         }
 
-    return result
+    # Validate with Pydantic schema
+    try:
+        validated = ClassificationSchema(**result_dict)
+        return validated.model_dump()
+    except ValidationError as e:
+        # Log validation error but return best-effort result
+        print(f"Schema validation warning in classify_document: {e}")
+        # Return original dict with defaults for missing fields
+        result_dict.setdefault("document_type", "Other")
+        result_dict.setdefault("confidence_score", 0.0)
+        result_dict.setdefault("product_name", "")
+        result_dict.setdefault("reasoning", "")
+        return result_dict
 
 
 if __name__ == "__main__":

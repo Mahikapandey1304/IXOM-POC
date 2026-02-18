@@ -8,9 +8,12 @@ batch information, and compliance statements.
 import json
 from pathlib import Path
 from openai import OpenAI
+from pydantic import ValidationError
 
 import config
 from core.pdf_renderer import pdf_to_base64_images
+from core.retry_config import retry_openai_call, retry_file_io
+from core.schemas import CertificateSchema
 
 client = OpenAI(api_key=config.OPENAI_API_KEY)
 
@@ -140,20 +143,23 @@ def extract_certificate(pdf_path: str, model: str = None, expected_type: str = "
             },
         })
 
-    response = client.chat.completions.create(
-        model=model,
-        temperature=config.TEMPERATURE,
-        max_tokens=4096,
-        messages=[{"role": "user", "content": content}],
-        response_format={"type": "json_object"},
-    )
-
+    @retry_openai_call
+    def _call_openai():
+        return client.chat.completions.create(
+            model=model,
+            temperature=config.TEMPERATURE,
+            max_tokens=4096,
+            messages=[{"role": "user", "content": content}],
+            response_format={"type": "json_object"},
+        )
+    
+    response = _call_openai()
     result_text = response.choices[0].message.content.strip()
 
     try:
-        result = json.loads(result_text)
+        result_dict = json.loads(result_text)
     except json.JSONDecodeError:
-        result = {
+        result_dict = {
             "document_type": expected_type,
             "product_name": "",
             "batch_number": "",
@@ -162,18 +168,31 @@ def extract_certificate(pdf_path: str, model: str = None, expected_type: str = "
             "error": f"Failed to parse: {result_text[:200]}",
         }
 
-    # Ensure required fields
-    result.setdefault("document_type", expected_type)
-    result.setdefault("product_name", "")
-    result.setdefault("batch_number", "")
-    result.setdefault("confidence_score", 0.0)
-    result.setdefault("parameters", [])
+    # Validate with Pydantic schema
+    try:
+        validated = CertificateSchema(**result_dict)
+        result = validated.model_dump()
+    except ValidationError as e:
+        # Log validation error but continue with best-effort result
+        print(f"Schema validation warning in extract_certificate: {e}")
+        # Ensure required fields exist
+        result_dict.setdefault("document_type", expected_type)
+        result_dict.setdefault("product_name", "")
+        result_dict.setdefault("batch_number", "")
+        result_dict.setdefault("confidence_score", 0.0)
+        result_dict.setdefault("parameters", [])
+        result = result_dict
 
     # Save extracted JSON
     output_name = Path(pdf_path).stem + f"_{expected_type.lower()}.json"
     output_path = config.JSON_OUTPUT_DIR / output_name
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(result, f, indent=2, ensure_ascii=False)
+    
+    @retry_file_io
+    def _save_json():
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, indent=2, ensure_ascii=False)
+    
+    _save_json()
 
     return result
 
