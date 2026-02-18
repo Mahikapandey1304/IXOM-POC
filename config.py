@@ -36,8 +36,8 @@ AUDIT_LOG = LOGS_DIR / "audit_log.csv"
 OUTPUTS_DIR = PROJECT_ROOT / os.getenv("OUTPUTS_DIR", "outputs")
 JSON_OUTPUT_DIR = OUTPUTS_DIR / "structured_json"
 
-# Source PDFs folder (original location)
-SOURCE_PDFS_DIR = PROJECT_ROOT.parent / "pdfs"
+# Source PDFs folder (same directory as project)
+SOURCE_PDFS_DIR = PROJECT_ROOT / "pdfs"
 
 # ─── Extraction Settings ─────────────────────────────────────────────
 MAX_PAGES_PER_DOC = 10          # Max pages to send to Vision API
