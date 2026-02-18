@@ -726,7 +726,7 @@ with tab_history:
 st.markdown(
     """
 <div style="text-align:center; color:#94a3b8; font-size:0.75rem; margin-top:2.5rem; padding-top:1rem; border-top:1px solid #e2e8f0;">
-    Intelligent Document Verification &nbsp;|&nbsp; Powered by GPT-4o Vision
+    Intelligent Document Verification
 </div>
 """,
     unsafe_allow_html=True,
