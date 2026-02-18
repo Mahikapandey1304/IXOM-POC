@@ -6,7 +6,9 @@
 
 ## Overview
 
-The UI is a single-page **Streamlit** web application (`ui.py`) that lets users upload two PDF documents — a **Product Specification** and a **Supplier Certificate** — and runs an end-to-end AI-powered validation pipeline. All processing happens server-side using OpenAI GPT-4o Vision. The interface is designed for live demo use: minimal clicks, clean layout, no configuration required.
+The UI is a single-page **Streamlit** web application (`ui.py`) with an **IXOM-branded light theme** that lets users upload two PDF documents — a **Product Specification** and a **Supplier Certificate** — and runs an end-to-end AI-powered validation pipeline. All processing happens server-side using OpenAI GPT-4o Vision. The interface is designed for live demo use: minimal clicks, clean layout, no configuration required.
+
+The theme uses IXOM's teal brand palette on a light gray background with white rounded cards, matching corporate design guidelines.
 
 **Launch command:**
 
@@ -23,10 +25,10 @@ Default URL: `http://localhost:8501`
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
-│                    HERO HEADER                                 │
+│                    HERO HEADER (white bar)                      │
+│  IXOM Logo (SVG, teal)                                         │
 │  Title: INTELLIGENT DOCUMENT VERIFICATION                     │
 │  Subtitle: Automated Supplier Certificate Validation Engine   │
-│  Pipeline pills: ① Upload → ② Classify → ③ Extract → ④ Check │
 └────────────────────────────────────────────────────────────────┘
                             │
               ┌─────────────┴─────────────┐
@@ -70,23 +72,25 @@ Default URL: `http://localhost:8501`
 
 ### 1. Document Upload
 
-Two side-by-side upload zones:
+Two side-by-side **white rounded cards** (`st.container(border=True)` inside `st.columns`), each containing:
 
 | Column | Label | Accepts | Purpose |
-|--------|-------|---------|---------|
+|--------|-------|---------|----------|
 | Left | **Product Specification** | PDF | The internal spec defining acceptable parameter ranges |
 | Right | **Supplier Certificate** | PDF | The supplier-provided COA / COCA / COC to validate |
 
-- Drag-and-drop or browse
-- After upload, a green confirmation bar shows the filename
+- Each card has a bold title at the top and a tall dashed-border dropzone inside
+- Dropzone has a teal cloud upload icon, centered "Drag and drop file here" text, and a teal **Browse files** pill button
+- Drag-and-drop or click Browse files
+- After upload, a green confirmation badge shows the filename with a checkmark
 - Both files must be uploaded before the Validate button appears
 - If files are missing, a "Getting Started" prompt is shown instead
 
 ### 2. Validate Button
 
-A full-width gradient blue button: **"Validate Certificate"**
+A full-width **teal** button: **"VALIDATE CERTIFICATE"**
 
-Clicking it triggers the 4-step AI pipeline with a single progress bar.
+Styled with IXOM teal (`#00838f`), uppercase text, 2px letter-spacing, and hover lift effect. Clicking it triggers the 4-step AI pipeline with a single progress bar.
 
 ### 3. Processing Pipeline
 
@@ -198,39 +202,71 @@ A full-width Streamlit dataframe showing all logged audit records. The **Model**
 
 ### Layout
 
-- **Wide layout** — uses full browser width (max 1200px centered)
+- **Wide layout** — uses full browser width (100%, 3rem horizontal padding)
 - **No sidebar** — hidden via CSS
 - **No Streamlit chrome** — hamburger menu, footer, and header are all hidden
 - **Two tabs only** — Validate Certificate + Audit History
+- **IXOM logo** — inline SVG rendered in the hero header (`ixom_logo.svg`)
+- **Light theme enforced** via `.streamlit/config.toml` (`base = "light"`)
 
-### Color Palette
+### Color Palette (IXOM Light Theme)
 
 | Element | Color |
 |---------|-------|
-| Hero background | Dark navy gradient (`#0a1628` → `#2a5a8c`) |
-| Pipeline pills | Blue translucent (`rgba(59,130,246,0.15)`) |
-| PASS badge | Green gradient (`#065f46` → `#047857`) |
-| FAIL badge | Red gradient (`#7f1d1d` → `#991b1b`) |
-| REVIEW badge | Amber gradient (`#78350f` → `#92400e`) |
-| Buttons | Blue gradient (`#1e40af` → `#3b82f6`) |
-| Cards | Dark translucent (`rgba(15,23,42,0.6)`) |
-| Text (primary) | Light gray (`#e2e8f0`) |
-| Text (secondary) | Muted gray (`#94a3b8`) |
+| Page background | Light gray (`#edf1f5`) |
+| Hero header | White (`#ffffff`) with bottom border |
+| Upload cards | White (`#ffffff`), 16px rounded corners, subtle shadow |
+| Upload dropzone | Dashed border (`#c0c8d0`), `#fafbfc` fill |
+| Cloud upload icon | IXOM teal (`#00838f`) |
+| Browse files button | Teal pill (`#00838f`, 22px radius) |
+| Validate button | IXOM teal (`#00838f`), hover `#006064` |
+| PASS badge | Green (`#047857` on `#e6f7ed`) |
+| FAIL badge | Red (`#b91c1c` on `#fef2f2`) |
+| REVIEW badge | Amber (`#92400e` on `#fffbeb`) |
+| Active tab | Teal text + teal underline (`#00838f`) |
+| Metric cards | White, light border, subtle shadow |
+| Table header | Light teal (`#e0f2f4`) |
+| Text (primary) | Dark (`#1a1a2e`) |
+| Text (secondary) | Muted gray (`#7a8a9a`, `#94a3b8`) |
+
+### Theme Configuration
+
+The Streamlit light theme is enforced via `.streamlit/config.toml`:
+
+```toml
+[theme]
+base = "light"
+primaryColor = "#00838f"
+backgroundColor = "#edf1f5"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#1a1a2e"
+```
 
 ### Typography
 
-- Title: 1.6rem, 700 weight, 1.5px letter-spacing
-- Subtitle: 0.85rem, muted gray
-- Section headers: 1.1rem, 600 weight, blue underline
-- Body/table text: 0.82–0.85rem
-- Metric values: 1.5rem, 700 weight
+- Title: 2.3rem, 700 weight
+- Subtitle: 1.05rem, muted gray
+- Upload card titles: 1.25rem, 700 weight
+- Section headers: 1.1rem, 600 weight, teal underline
+- Body/table text: 0.82–0.95rem
+- Metric values: 1.6rem, 700 weight
+
+### Upload Card Design
+
+Each upload card uses `st.container(border=True)` inside a `st.columns(2, gap="large")` layout. This ensures the file uploader widget renders **inside** the card container (unlike custom HTML `<div>` wrappers which Streamlit cannot wrap around native widgets). The CSS then styles:
+
+- The container wrapper → white card with rounded corners and shadow
+- The dropzone → tall (230px min-height), dashed border, centered column layout
+- The upload icon → 56px teal cloud icon
+- The browse button → teal pill button
 
 ### Spacing
 
-- Aggressive gap reduction on all Streamlit vertical blocks (0.15rem)
+- Full-width layout with 3rem horizontal padding
+- Large gap between upload columns
 - File uploader labels hidden (CSS `display:none`)
-- Upload confirmation bars have minimal top margin (0.35rem)
-- No padding waste between elements
+- Upload confirmation badges with checkmark icon
+- Clean spacing between sections
 
 ---
 
@@ -304,8 +340,11 @@ All config is centralized in `config.py`:
 
 ```
 intelligent_safety_net/
-├── ui.py                          ← Main UI (this file)
-├── ui_old.py                      ← Phase 0 backup (read-only audit viewer)
+├── ui.py                          ← Main UI (IXOM light theme)
+├── ui_old.py                      ← Pre-theme backup (original dark UI)
+├── ixom_logo.svg                  ← IXOM brand logo (teal SVG)
+├── .streamlit/
+│   └── config.toml                ← Streamlit light theme configuration
 ├── config.py                      ← Central configuration
 ├── model_switcher.py              ← Model selection utility
 ├── core/

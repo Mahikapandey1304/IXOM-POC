@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 80" width="200" height="80">
+  <!-- Mountain shape - dark teal -->
+  <polygon points="40,15 80,55 0,55" fill="#004D54"/>
+  <!-- Mountain highlight - teal accent -->
+  <polygon points="40,15 60,35 40,35 20,55 0,55" fill="#00A5B5" opacity="0.85"/>
+  <!-- Light accent triangle -->
+  <polygon points="40,25 55,40 40,40" fill="#66CDD6" opacity="0.7"/>
+  <!-- IXOM text -->
+  <text x="90" y="52" font-family="Arial, Helvetica, sans-serif" font-size="36" font-weight="700" fill="#004D54" letter-spacing="3">IXOM</text>
+</svg>

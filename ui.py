@@ -11,6 +11,7 @@ import os
 import json
 import tempfile
 import time
+import base64
 from pathlib import Path
 from datetime import datetime
 
@@ -35,300 +36,313 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# ── CSS ─────────────────────────────────────────────────────────────────
+# ── IXOM Logo ────────────────────────────────────────────────────────────
+_logo_path = Path(__file__).parent / "ixom_logo.svg"
+if _logo_path.exists():
+    _logo_b64 = base64.b64encode(_logo_path.read_bytes()).decode()
+    _logo_src = f"data:image/svg+xml;base64,{_logo_b64}"
+else:
+    _logo_src = ""
+
+# ── CSS — IXOM Light Theme ──────────────────────────────────────────────
 st.markdown(
-    """
+    f"""
 <style>
-/* Hide sidebar, hamburger, footer */
-[data-testid="stSidebar"] {display:none}
-#MainMenu {visibility:hidden}
-footer {visibility:hidden}
-header {visibility:hidden}
+/* ── Hide Streamlit chrome ── */
+[data-testid="stSidebar"] {{display:none}}
+#MainMenu {{visibility:hidden}}
+footer {{visibility:hidden}}
+header {{visibility:hidden}}
 
-/* Global */
-.block-container {
-    padding-top: 1rem !important;
-    padding-bottom: 1rem !important;
-    max-width: 1200px;
-}
-
-/* Hero header */
-.hero-header {
-    background: linear-gradient(135deg, #0a1628 0%, #1a3a5c 50%, #2a5a8c 100%);
-    border-radius: 12px;
-    padding: 1.5rem 2rem;
-    margin-bottom: 1.2rem;
-    border: 1px solid rgba(255,255,255,0.08);
-}
-.hero-header h1 {
-    color: #ffffff;
-    font-size: 1.6rem;
-    font-weight: 700;
-    margin: 0 0 0.4rem 0;
-    letter-spacing: 1.5px;
-}
-.hero-subtitle {
-    color: #94a3b8;
-    font-size: 0.85rem;
-    margin: 0 0 0.8rem 0;
-}
-.pipeline-steps {
-    display: flex;
-    gap: 0.8rem;
-    flex-wrap: wrap;
-}
-.pipeline-step {
-    background: rgba(59,130,246,0.15);
-    border: 1px solid rgba(59,130,246,0.3);
-    border-radius: 20px;
-    padding: 0.25rem 0.8rem;
-    color: #93c5fd;
-    font-size: 0.75rem;
-    font-weight: 500;
-}
-.step-num {
-    background: #3b82f6;
-    color: white;
-    border-radius: 50%;
-    width: 18px;
-    height: 18px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.65rem;
-    margin-right: 0.3rem;
-}
-
-/* Upload section labels */
-.upload-label {
-    color: #e2e8f0;
-    font-size: 1rem;
-    font-weight: 600;
-    margin: 0 0 0.4rem 0;
-    padding: 0;
-}
-
-/* Kill ALL default spacing inside upload columns */
-div[data-testid="stFileUploader"] {
-    margin-top: 0 !important;
-    margin-bottom: 0 !important;
-    padding-bottom: 0 !important;
-}
-div[data-testid="stFileUploader"] > section {
-    padding: 0 !important;
-}
-div[data-testid="stFileUploader"] label {
-    display: none !important;
-}
-.file-loaded {
-    margin-top: 0.35rem !important;
-    margin-bottom: 0 !important;
-}
-
-/* Tighten all vertical blocks globally */
-div[data-testid="stVerticalBlock"] > div {
+/* ── Global ── */
+.stApp {{
+    background-color: #edf1f5 !important;
+}}
+.block-container {{
     padding-top: 0 !important;
-    padding-bottom: 0 !important;
-}
-.element-container {
-    margin-top: 0 !important;
-    margin-bottom: 0 !important;
-}
+    padding-bottom: 1rem !important;
+    max-width: 100% !important;
+    padding-left: 3rem !important;
+    padding-right: 3rem !important;
+}}
 
-/* Status badges */
-.status-pass {
-    background: linear-gradient(135deg, #065f46, #047857);
-    color: #6ee7b7;
-    padding: 0.15rem 0.6rem;
-    border-radius: 4px;
-    font-weight: 600;
-    font-size: 0.8rem;
-}
-.status-fail {
-    background: linear-gradient(135deg, #7f1d1d, #991b1b);
-    color: #fca5a5;
-    padding: 0.15rem 0.6rem;
-    border-radius: 4px;
-    font-weight: 600;
-    font-size: 0.8rem;
-}
-.status-review {
-    background: linear-gradient(135deg, #78350f, #92400e);
-    color: #fcd34d;
-    padding: 0.15rem 0.6rem;
-    border-radius: 4px;
-    font-weight: 600;
-    font-size: 0.8rem;
-}
-
-/* Alert panels */
-.alert-success {
-    background: rgba(6,78,59,0.3);
-    border-left: 4px solid #10b981;
-    border-radius: 6px;
-    padding: 0.8rem 1rem;
-    margin: 0.5rem 0;
-    color: #a7f3d0;
-    font-size: 0.85rem;
-}
-.alert-error {
-    background: rgba(127,29,29,0.3);
-    border-left: 4px solid #ef4444;
-    border-radius: 6px;
-    padding: 0.8rem 1rem;
-    margin: 0.5rem 0;
-    color: #fecaca;
-    font-size: 0.85rem;
-}
-.alert-warning {
-    background: rgba(120,53,15,0.3);
-    border-left: 4px solid #f59e0b;
-    border-radius: 6px;
-    padding: 0.8rem 1rem;
-    margin: 0.5rem 0;
-    color: #fde68a;
-    font-size: 0.85rem;
-}
-.alert-info {
-    background: rgba(30,58,138,0.3);
-    border-left: 4px solid #3b82f6;
-    border-radius: 6px;
-    padding: 0.8rem 1rem;
-    margin: 0.5rem 0;
-    color: #bfdbfe;
-    font-size: 0.85rem;
-}
-
-/* Metric cards */
-.metric-card {
-    background: rgba(15,23,42,0.6);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 8px;
-    padding: 0.8rem 1rem;
-    text-align: center;
-}
-.metric-card .label {
-    color: #94a3b8;
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-bottom: 0.3rem;
-}
-.metric-card .value {
-    color: #f1f5f9;
-    font-size: 1.5rem;
+/* ══════════════════════════════════════
+   HERO HEADER
+   ══════════════════════════════════════ */
+.hero-wrap {{
+    background: #ffffff;
+    margin: 0 -3rem 0 -3rem;
+    padding: 2rem 3rem 1.8rem 3rem;
+    border-bottom: 1px solid #e0e4e8;
+    margin-bottom: 1.5rem;
+}}
+.hero-wrap img.ixom-logo {{
+    height: 58px;
+    margin-bottom: 1rem;
+    display: block;
+}}
+.hero-wrap h1 {{
+    color: #1a1a2e;
+    font-size: 2.3rem;
     font-weight: 700;
-}
+    margin: 0 0 0.25rem 0;
+    line-height: 1.15;
+}}
+.hero-wrap .subtitle {{
+    color: #7a8a9a;
+    font-size: 1.05rem;
+    font-weight: 400;
+    margin: 0;
+}}
 
-/* Section headers */
-.section-header {
-    color: #e2e8f0;
-    font-size: 1.1rem;
-    font-weight: 600;
-    margin: 1rem 0 0.5rem 0;
-    padding-bottom: 0.3rem;
-    border-bottom: 2px solid rgba(59,130,246,0.3);
-}
+/* ══════════════════════════════════════
+   UPLOAD CARDS — st.container(border=True)
+   ══════════════════════════════════════ */
+div[data-testid="stVerticalBlockBorderWrapper"] {{
+    background: #ffffff !important;
+    border: 1px solid #d5dbe2 !important;
+    border-radius: 16px !important;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.04) !important;
+    padding: 0 !important;
+    overflow: visible !important;
+}}
+div[data-testid="stVerticalBlockBorderWrapper"] > div {{
+    padding: 1.4rem 1.6rem !important;
+}}
 
-/* Validate button */
-.stButton > button {
-    background: linear-gradient(135deg, #1e40af, #3b82f6) !important;
-    color: white !important;
+/* Upload card title */
+.upload-title {{
+    color: #1a1a2e;
+    font-size: 1.25rem;
+    font-weight: 700;
+    margin: 0 0 0.5rem 0;
+    padding: 0;
+}}
+
+/* ══════════════════════════════════════
+   FILE UPLOADER restyle
+   ══════════════════════════════════════ */
+/* Hide default label */
+div[data-testid="stFileUploader"] label {{
+    display: none !important;
+}}
+div[data-testid="stFileUploader"] {{
+    margin: 0 !important;
+}}
+div[data-testid="stFileUploader"] section {{
+    padding: 0 !important;
+}}
+
+/* ── DROPZONE: tall, centered, dashed border ── */
+div[data-testid="stFileUploaderDropzone"] {{
+    background: #fafbfc !important;
+    border: 2.5px dashed #c0c8d0 !important;
+    border-radius: 14px !important;
+    padding: 2.5rem 1.5rem !important;
+    min-height: 230px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 0.3rem !important;
+    transition: border-color 0.25s, background 0.25s !important;
+    cursor: pointer !important;
+}}
+div[data-testid="stFileUploaderDropzone"]:hover {{
+    border-color: #00838f !important;
+    background: #f2fafa !important;
+}}
+
+/* Cloud icon → teal, large */
+div[data-testid="stFileUploaderDropzone"] svg {{
+    color: #00838f !important;
+    fill: #00838f !important;
+    width: 56px !important;
+    height: 56px !important;
+    margin-bottom: 0.5rem !important;
+    opacity: 0.85;
+}}
+
+/* Text inside dropzone */
+div[data-testid="stFileUploaderDropzone"] span {{
+    color: #3a4a5a !important;
+    font-size: 0.95rem !important;
+    font-weight: 500 !important;
+}}
+div[data-testid="stFileUploaderDropzone"] small {{
+    color: #94a3b8 !important;
+    font-size: 0.82rem !important;
+}}
+
+/* Browse files button → teal pill */
+div[data-testid="stFileUploaderDropzone"] button,
+div[data-testid="stFileUploader"] button[kind="secondary"],
+div[data-testid="stFileUploader"] button {{
+    background: #00838f !important;
+    color: #ffffff !important;
+    border: none !important;
+    border-radius: 22px !important;
+    padding: 0.5rem 1.8rem !important;
+    font-weight: 600 !important;
+    font-size: 0.9rem !important;
+    margin-top: 0.6rem !important;
+    cursor: pointer !important;
+    letter-spacing: 0.3px !important;
+}}
+div[data-testid="stFileUploaderDropzone"] button:hover,
+div[data-testid="stFileUploader"] button:hover {{
+    background: #006a73 !important;
+}}
+
+/* File loaded badge */
+.file-loaded {{
+    background: #ecfdf5;
+    border: 1px solid #86efac;
+    border-radius: 8px;
+    padding: 0.5rem 1rem;
+    color: #047857;
+    font-size: 0.88rem;
+    font-weight: 500;
+    margin-top: 0.5rem;
+}}
+
+/* ══════════════════════════════════════
+   VALIDATE BUTTON
+   ══════════════════════════════════════ */
+.stButton > button {{
+    background: #00838f !important;
+    color: #ffffff !important;
     border: none !important;
     border-radius: 8px !important;
-    padding: 0.6rem 2rem !important;
-    font-weight: 600 !important;
-    font-size: 0.95rem !important;
+    padding: 0.9rem 2rem !important;
+    font-weight: 700 !important;
+    font-size: 1.1rem !important;
     width: 100% !important;
+    text-transform: uppercase !important;
+    letter-spacing: 2px !important;
     transition: all 0.2s ease !important;
-}
-.stButton > button:hover {
-    background: linear-gradient(135deg, #1e3a8a, #2563eb) !important;
-    box-shadow: 0 4px 15px rgba(59,130,246,0.3) !important;
+    margin-top: 0.5rem !important;
+}}
+.stButton > button:hover {{
+    background: #006064 !important;
+    box-shadow: 0 6px 20px rgba(0,131,143,0.30) !important;
     transform: translateY(-1px) !important;
-}
+}}
 
-/* Reduce gaps globally */
-.stRadio > div {
-    gap: 0.3rem !important;
-}
-div[data-testid="stVerticalBlock"] > div {
-    gap: 0.15rem !important;
-}
-div[data-testid="column"] > div {
-    gap: 0.15rem !important;
-}
+/* ══════════════════════════════════════
+   TABS
+   ══════════════════════════════════════ */
+.stTabs [data-baseweb="tab-list"] {{
+    gap: 0;
+    border-bottom: 2px solid #e2e8f0;
+    background: transparent;
+}}
+.stTabs [data-baseweb="tab"] {{
+    padding: 0.6rem 1.4rem;
+    font-size: 0.95rem;
+    color: #7a8a9a;
+    font-weight: 500;
+    background: transparent !important;
+}}
+.stTabs [aria-selected="true"] {{
+    color: #00838f !important;
+    border-bottom-color: #00838f !important;
+    font-weight: 700 !important;
+}}
+.stTabs [data-baseweb="tab-panel"] {{
+    padding-top: 1.5rem !important;
+}}
 
-/* Tighter spacing after tabs header */
-.stTabs [data-baseweb="tab-panel"] {
-    padding-top: 0.5rem !important;
-}
+/* ══════════════════════════════════════
+   STATUS / ALERTS / METRICS / TABLES
+   ══════════════════════════════════════ */
+.status-pass {{
+    background: #e6f7ed; color: #047857;
+    padding: 0.2rem 0.7rem; border-radius: 4px;
+    font-weight: 600; font-size: 0.8rem; border: 1px solid #a7f3d0;
+}}
+.status-fail {{
+    background: #fef2f2; color: #b91c1c;
+    padding: 0.2rem 0.7rem; border-radius: 4px;
+    font-weight: 600; font-size: 0.8rem; border: 1px solid #fecaca;
+}}
+.status-review {{
+    background: #fffbeb; color: #92400e;
+    padding: 0.2rem 0.7rem; border-radius: 4px;
+    font-weight: 600; font-size: 0.8rem; border: 1px solid #fde68a;
+}}
 
-/* Table styling */
-.comparison-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.82rem;
-    margin-top: 0.5rem;
-}
-.comparison-table th {
-    background: rgba(30,58,138,0.4);
-    color: #93c5fd;
-    padding: 0.5rem 0.6rem;
-    text-align: left;
-    font-weight: 600;
-    border-bottom: 2px solid rgba(59,130,246,0.3);
-}
-.comparison-table td {
-    padding: 0.4rem 0.6rem;
-    border-bottom: 1px solid rgba(255,255,255,0.05);
-    color: #e2e8f0;
-}
-.comparison-table tr:hover {
-    background: rgba(59,130,246,0.05);
-}
+.alert-success {{
+    background: #ecfdf5; border-left: 4px solid #10b981;
+    border-radius: 8px; padding: 0.9rem 1.2rem;
+    margin: 0.5rem 0; color: #065f46; font-size: 0.88rem;
+}}
+.alert-error {{
+    background: #fef2f2; border-left: 4px solid #ef4444;
+    border-radius: 8px; padding: 0.9rem 1.2rem;
+    margin: 0.5rem 0; color: #7f1d1d; font-size: 0.88rem;
+}}
+.alert-warning {{
+    background: #fffbeb; border-left: 4px solid #f59e0b;
+    border-radius: 8px; padding: 0.9rem 1.2rem;
+    margin: 0.5rem 0; color: #78350f; font-size: 0.88rem;
+}}
+.alert-info {{
+    background: #e0f7fa; border-left: 4px solid #00838f;
+    border-radius: 8px; padding: 0.9rem 1.2rem;
+    margin: 0.5rem 0; color: #004d54; font-size: 0.88rem;
+}}
 
-/* Loaded/uploaded file confirmations */
-.file-loaded {
-    background: rgba(6,78,59,0.4);
-    border: 1px solid rgba(16,185,129,0.3);
-    border-radius: 6px;
-    padding: 0.3rem 0.8rem;
-    color: #6ee7b7;
-    font-size: 0.82rem;
-    margin-top: 0.3rem !important;
-    margin-bottom: 0 !important;
-    line-height: 1.3;
-}
+.metric-card {{
+    background: #ffffff; border: 1px solid #e2e8f0;
+    border-radius: 10px; padding: 1rem 1.2rem;
+    text-align: center; box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+}}
+.metric-card .label {{
+    color: #6b7b8d; font-size: 0.72rem;
+    text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.3rem;
+}}
+.metric-card .value {{
+    color: #1a1a2e; font-size: 1.6rem; font-weight: 700;
+}}
 
-/* Tabs styling */
-.stTabs [data-baseweb="tab-list"] {
-    gap: 0.5rem;
-    border-bottom: 1px solid rgba(255,255,255,0.1);
-}
-.stTabs [data-baseweb="tab"] {
-    padding: 0.5rem 1rem;
-    font-size: 0.85rem;
-}
+.section-header {{
+    color: #1a1a2e; font-size: 1.1rem; font-weight: 600;
+    margin: 1.2rem 0 0.6rem 0; padding-bottom: 0.4rem;
+    border-bottom: 2px solid #00838f;
+}}
 
-/* Getting started box */
-.getting-started {
-    background: rgba(30,58,138,0.15);
-    border: 1px dashed rgba(59,130,246,0.3);
-    border-radius: 10px;
-    padding: 1.5rem 2rem;
-    text-align: center;
-    margin: 1rem 0;
-}
-.getting-started h4 {
-    color: #93c5fd;
-    margin: 0 0 0.5rem 0;
-}
-.getting-started p {
-    color: #64748b;
-    font-size: 0.85rem;
-    margin: 0;
-}
+.comparison-table {{
+    width: 100%; border-collapse: collapse; font-size: 0.85rem;
+    margin-top: 0.5rem; background: #ffffff; border-radius: 10px;
+    overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+}}
+.comparison-table th {{
+    background: #e0f2f4; color: #00606a;
+    padding: 0.6rem 0.8rem; text-align: left;
+    font-weight: 600; border-bottom: 2px solid rgba(0,131,143,0.2);
+}}
+.comparison-table td {{
+    padding: 0.5rem 0.8rem; border-bottom: 1px solid #f0f0f0; color: #334155;
+}}
+.comparison-table tr:hover {{ background: #f8fdfd; }}
+
+.getting-started {{
+    background: #ffffff; border: 1px dashed #c5cdd5;
+    border-radius: 14px; padding: 2rem 2.5rem;
+    text-align: center; margin: 1rem 0;
+}}
+.getting-started h4 {{ color: #00838f; margin: 0 0 0.5rem 0; font-size: 1.1rem; }}
+.getting-started p {{ color: #7a8a9a; font-size: 0.9rem; margin: 0; }}
+
+/* Progress bar */
+.stProgress > div > div > div > div {{
+    background-color: #00838f !important;
+}}
+
+/* Misc */
+div[data-baseweb="select"] {{ background: #ffffff; }}
+.stDataFrame {{ background: #ffffff; border-radius: 10px; }}
 </style>
 """,
     unsafe_allow_html=True,
@@ -350,17 +364,17 @@ def save_upload(uploaded_file) -> str:
 
 
 # ── Hero Header ─────────────────────────────────────────────────────────
+_logo_tag = (
+    f'<img class="ixom-logo" src="{_logo_src}" alt="IXOM">'
+    if _logo_src
+    else '<div style="font-size:2rem;font-weight:800;color:#004D54;letter-spacing:4px;margin-bottom:1rem;">IXOM</div>'
+)
 st.markdown(
-    """
-<div class="hero-header">
-    <h1>INTELLIGENT DOCUMENT VERIFICATION</h1>
-    <p class="hero-subtitle">Automated Supplier Certificate Validation Engine</p>
-    <div class="pipeline-steps">
-        <span class="pipeline-step"><span class="step-num">1</span> Upload Documents</span>
-        <span class="pipeline-step"><span class="step-num">2</span> AI Classification</span>
-        <span class="pipeline-step"><span class="step-num">3</span> Parameter Extraction</span>
-        <span class="pipeline-step"><span class="step-num">4</span> Compliance Check</span>
-    </div>
+    f"""
+<div class="hero-wrap">
+    {_logo_tag}
+    <h1>Intelligent Document Verification</h1>
+    <p class="subtitle">Automated Supplier Certificate Validation Engine</p>
 </div>
 """,
     unsafe_allow_html=True,
@@ -374,29 +388,49 @@ tab_validate, tab_history = st.tabs(["Validate Certificate", "Audit History"])
 # =====================================================================
 with tab_validate:
 
-    col_spec, col_cert = st.columns(2, gap="medium")
+    col_spec, col_cert = st.columns(2, gap="large")
 
     # ── Left: Product Specification Upload ──
     with col_spec:
-        st.markdown('<p class="upload-label">Product Specification</p>', unsafe_allow_html=True)
-        spec_file = st.file_uploader(
-            "Upload spec", type=["pdf"], key="spec_upload", label_visibility="collapsed",
-        )
-        spec_path = None
-        if spec_file:
-            spec_path = save_upload(spec_file)
-            st.markdown(f'<div class="file-loaded">Loaded: {spec_file.name}</div>', unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(
+                '<p class="upload-title">Product Specification</p>',
+                unsafe_allow_html=True,
+            )
+            spec_file = st.file_uploader(
+                "Upload spec",
+                type=["pdf"],
+                key="spec_upload",
+                label_visibility="collapsed",
+            )
+            spec_path = None
+            if spec_file:
+                spec_path = save_upload(spec_file)
+                st.markdown(
+                    f'<div class="file-loaded">&#10003; Loaded: {spec_file.name}</div>',
+                    unsafe_allow_html=True,
+                )
 
     # ── Right: Supplier Certificate Upload ──
     with col_cert:
-        st.markdown('<p class="upload-label">Supplier Certificate</p>', unsafe_allow_html=True)
-        cert_file = st.file_uploader(
-            "Upload cert", type=["pdf"], key="cert_upload", label_visibility="collapsed",
-        )
-        cert_path = None
-        if cert_file:
-            cert_path = save_upload(cert_file)
-            st.markdown(f'<div class="file-loaded">Uploaded: {cert_file.name}</div>', unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(
+                '<p class="upload-title">Supplier Certificate</p>',
+                unsafe_allow_html=True,
+            )
+            cert_file = st.file_uploader(
+                "Upload cert",
+                type=["pdf"],
+                key="cert_upload",
+                label_visibility="collapsed",
+            )
+            cert_path = None
+            if cert_file:
+                cert_path = save_upload(cert_file)
+                st.markdown(
+                    f'<div class="file-loaded">&#10003; Uploaded: {cert_file.name}</div>',
+                    unsafe_allow_html=True,
+                )
 
     # ── Validate Button ─────────────────────────────────────────────
     if not (spec_path and cert_path):
@@ -410,7 +444,7 @@ with tab_validate:
             unsafe_allow_html=True,
         )
     else:
-        if st.button("Validate Certificate", use_container_width=True):
+        if st.button("VALIDATE CERTIFICATE", use_container_width=True):
 
             # ── Progress pipeline ──
             progress_bar = st.progress(0, text="Classifying document...")
@@ -446,7 +480,6 @@ with tab_validate:
             progress_bar.empty()
 
             # ── FINAL REPORT ──────────────────────────────────────
-            # Read correct keys from comparator output
             overall = result.get("status", "REVIEW").upper()
             details = result.get("details", [])
             reason = result.get("reason", "")
@@ -461,7 +494,9 @@ with tab_validate:
                 n_pass = sum(1 for d in details if d.get("status", "").upper() == "PASS")
                 n_fail = sum(1 for d in details if d.get("status", "").upper() == "FAIL")
                 n_review = sum(1 for d in details if d.get("status", "").upper() == "REVIEW")
-                n_not_in_cert = sum(1 for d in details if d.get("status", "").upper() == "NOT_IN_CERT")
+                n_not_in_cert = sum(
+                    1 for d in details if d.get("status", "").upper() == "NOT_IN_CERT"
+                )
 
             # Overall result banner
             banner_cls = {
@@ -491,7 +526,8 @@ with tab_validate:
 
             if reason:
                 st.markdown(
-                    f'<div class="alert-warning" style="margin-top:0.3rem;"><strong>Reason:</strong> {reason}</div>',
+                    f'<div class="alert-warning" style="margin-top:0.3rem;">'
+                    f"<strong>Reason:</strong> {reason}</div>",
                     unsafe_allow_html=True,
                 )
 
@@ -504,19 +540,24 @@ with tab_validate:
                 (m4, "NOT IN CERT", n_not_in_cert),
             ]:
                 col.markdown(
-                    f'<div class="metric-card"><div class="label">{label}</div><div class="value">{val}</div></div>',
+                    f'<div class="metric-card">'
+                    f'<div class="label">{label}</div>'
+                    f'<div class="value">{val}</div>'
+                    f"</div>",
                     unsafe_allow_html=True,
                 )
 
             # Parameter details table
             if details:
-                st.markdown('<div class="section-header">Parameter Details</div>', unsafe_allow_html=True)
+                st.markdown(
+                    '<div class="section-header">Parameter Details</div>',
+                    unsafe_allow_html=True,
+                )
                 rows = ""
                 for d in details:
                     s = d.get("status", "REVIEW").upper()
                     badge = status_badge(s)
                     param = d.get("parameter", "") or d.get("spec_parameter", "—")
-                    # Build spec range from min/max
                     s_min = d.get("spec_min", "")
                     s_max = d.get("spec_max", "")
                     if s_min and s_max:
@@ -530,7 +571,11 @@ with tab_validate:
                     spec_val = d.get("spec_value", "—") or "—"
                     cert_val = d.get("cert_value", "—") or "—"
                     comment = d.get("reason", "") or ""
-                    rows += f"<tr><td>{badge}</td><td>{param}</td><td>{spec_range}</td><td>{spec_val}</td><td>{cert_val}</td><td>{comment}</td></tr>"
+                    rows += (
+                        f"<tr><td>{badge}</td><td>{param}</td>"
+                        f"<td>{spec_range}</td><td>{spec_val}</td>"
+                        f"<td>{cert_val}</td><td>{comment}</td></tr>"
+                    )
 
                 st.markdown(
                     f"""
@@ -554,7 +599,10 @@ with tab_validate:
             # Critical failures
             critical = [d for d in details if d.get("status", "").upper() == "FAIL"]
             if critical:
-                st.markdown('<div class="section-header">Critical Issues</div>', unsafe_allow_html=True)
+                st.markdown(
+                    '<div class="section-header">Critical Issues</div>',
+                    unsafe_allow_html=True,
+                )
                 for d in critical:
                     st.markdown(
                         f'<div class="alert-error"><strong>{d.get("parameter","—")}:</strong> '
@@ -566,7 +614,10 @@ with tab_validate:
             # Items for review
             reviews = [d for d in details if d.get("status", "").upper() == "REVIEW"]
             if reviews:
-                st.markdown('<div class="section-header">Items for Review</div>', unsafe_allow_html=True)
+                st.markdown(
+                    '<div class="section-header">Items for Review</div>',
+                    unsafe_allow_html=True,
+                )
                 for d in reviews:
                     st.markdown(
                         f'<div class="alert-warning"><strong>{d.get("parameter","—")}:</strong> '
@@ -591,7 +642,10 @@ with tab_validate:
 # TAB 2 — AUDIT HISTORY
 # =====================================================================
 with tab_history:
-    st.markdown('<div class="section-header">Audit History</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-header">Audit History</div>',
+        unsafe_allow_html=True,
+    )
 
     log_path = str(config.AUDIT_LOG)
     if not os.path.exists(log_path):
@@ -600,17 +654,23 @@ with tab_history:
             unsafe_allow_html=True,
         )
     else:
-        import pandas as pd
-
         df = pd.read_csv(log_path)
 
         # Filters
         col_f1, col_f2 = st.columns(2)
         with col_f1:
-            statuses = ["ALL"] + sorted(df["Status"].dropna().unique().tolist()) if "Status" in df.columns else ["ALL"]
+            statuses = (
+                ["ALL"] + sorted(df["Status"].dropna().unique().tolist())
+                if "Status" in df.columns
+                else ["ALL"]
+            )
             sel_status = st.selectbox("Filter by Status", statuses)
         with col_f2:
-            cert_types = ["ALL"] + sorted(df["Cert_Type"].dropna().unique().tolist()) if "Cert_Type" in df.columns else ["ALL"]
+            cert_types = (
+                ["ALL"] + sorted(df["Cert_Type"].dropna().unique().tolist())
+                if "Cert_Type" in df.columns
+                else ["ALL"]
+            )
             sel_cert = st.selectbox("Filter by Cert Type", cert_types)
 
         filtered = df.copy()
@@ -625,25 +685,48 @@ with tab_history:
 
         # Metrics
         total = len(filtered)
-        n_p = len(filtered[filtered["Status"] == "PASS"]) if "Status" in filtered.columns else 0
-        n_f = len(filtered[filtered["Status"] == "FAIL"]) if "Status" in filtered.columns else 0
-        n_r = len(filtered[filtered["Status"] == "REVIEW"]) if "Status" in filtered.columns else 0
+        n_p = (
+            len(filtered[filtered["Status"] == "PASS"])
+            if "Status" in filtered.columns
+            else 0
+        )
+        n_f = (
+            len(filtered[filtered["Status"] == "FAIL"])
+            if "Status" in filtered.columns
+            else 0
+        )
+        n_r = (
+            len(filtered[filtered["Status"] == "REVIEW"])
+            if "Status" in filtered.columns
+            else 0
+        )
 
         mc1, mc2, mc3, mc4 = st.columns(4)
-        for col, lbl, v in [(mc1, "TOTAL", total), (mc2, "PASSED", n_p), (mc3, "FAILED", n_f), (mc4, "REVIEW", n_r)]:
+        for col, lbl, v in [
+            (mc1, "TOTAL", total),
+            (mc2, "PASSED", n_p),
+            (mc3, "FAILED", n_f),
+            (mc4, "REVIEW", n_r),
+        ]:
             col.markdown(
-                f'<div class="metric-card"><div class="label">{lbl}</div><div class="value">{v}</div></div>',
+                f'<div class="metric-card">'
+                f'<div class="label">{lbl}</div>'
+                f'<div class="value">{v}</div>'
+                f"</div>",
                 unsafe_allow_html=True,
             )
 
-        st.markdown(f"<br><small>Showing {len(filtered)} of {len(df)} records</small>", unsafe_allow_html=True)
+        st.markdown(
+            f"<br><small>Showing {len(filtered)} of {len(df)} records</small>",
+            unsafe_allow_html=True,
+        )
         st.dataframe(filtered, use_container_width=True, hide_index=True)
 
 # ── Footer ──────────────────────────────────────────────────────────────
 st.markdown(
     """
-<div style="text-align:center; color:#475569; font-size:0.7rem; margin-top:2rem; padding-top:0.8rem; border-top:1px solid rgba(255,255,255,0.05);">
-    Intelligent Document Verification | Powered by GPT-4o Vision
+<div style="text-align:center; color:#94a3b8; font-size:0.75rem; margin-top:2.5rem; padding-top:1rem; border-top:1px solid #e2e8f0;">
+    Intelligent Document Verification &nbsp;|&nbsp; Powered by GPT-4o Vision
 </div>
 """,
     unsafe_allow_html=True,
