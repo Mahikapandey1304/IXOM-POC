@@ -452,27 +452,84 @@ with tab_validate:
             progress_bar = st.progress(0, text="Classifying document...")
             t0 = time.time()
 
-            # 1/4 — Classify
+            # 1/5 — Classify spec document first
+            spec_classification = classify_document(spec_path, MODEL)
+            spec_doc_type = spec_classification.get("document_type", "").upper()
+            progress_bar.progress(10, text="Classifying certificate...")
+
+            # Validate spec is actually a specification
+            valid_spec_types = ["PRODUCT_SPECIFICATION"]
+            if spec_doc_type not in valid_spec_types:
+                progress_bar.progress(100, text="Complete!")
+                time.sleep(0.3)
+                progress_bar.empty()
+
+                # Show FAIL immediately — not a valid specification
+                st.markdown(
+                    '<div class="alert-error" style="text-align:center;font-size:1.1rem;padding:1rem;">'
+                    f"<strong>Overall Result: FAIL</strong> &nbsp;|&nbsp; "
+                    f"Invalid Specification &nbsp;|&nbsp; "
+                    f"Detected as: {spec_doc_type or 'Unknown'}"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+                st.markdown(
+                    f'<div class="alert-warning" style="margin-top:0.3rem;">'
+                    f"<strong>Reason:</strong> The uploaded specification document is not a valid Product Specification. "
+                    f"It was classified as '<strong>{spec_doc_type or 'Unknown'}</strong>'. "
+                    f"Please upload a valid Product Specification document."
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+                st.stop()
+
+            # 2/5 — Classify certificate
             classification = classify_document(cert_path, MODEL)
             detected_type = classification.get("document_type", "COA").upper()
             valid_types = ["COA", "COCA", "COC"]
-            cert_type = detected_type if detected_type in valid_types else "COA"
+            cert_type = detected_type if detected_type in valid_types else None
             confidence = classification.get("confidence_score", 0)
-            progress_bar.progress(25, text="Extracting specification parameters...")
 
-            # 2/4 — Extract spec
+            # Validate cert is actually a certificate — reject early, don't waste time
+            if cert_type is None:
+                progress_bar.progress(100, text="Complete!")
+                time.sleep(0.3)
+                progress_bar.empty()
+
+                st.markdown(
+                    '<div class="alert-error" style="text-align:center;font-size:1.1rem;padding:1rem;">'
+                    f"<strong>Overall Result: FAIL</strong> &nbsp;|&nbsp; "
+                    f"Invalid Certificate &nbsp;|&nbsp; "
+                    f"Detected as: {detected_type or 'Unknown'}"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+                st.markdown(
+                    f'<div class="alert-warning" style="margin-top:0.3rem;">'
+                    f"<strong>Reason:</strong> The uploaded certificate document is not a valid Certificate. "
+                    f"It was classified as '<strong>{detected_type or 'Unknown'}</strong>'. "
+                    f"Expected: COA (Certificate of Analysis), COCA (Certificate of Compliance with Analysis), "
+                    f"or COC (Certificate of Conformance). Please upload a valid certificate."
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+                st.stop()
+
+            progress_bar.progress(30, text="Extracting specification parameters...")
+
+            # 3/5 — Extract spec
             spec_data = extract_spec(spec_path, MODEL)
             product = spec_data.get("product_name", "Unknown")
             spec_params = spec_data.get("parameters", [])
             progress_bar.progress(50, text="Extracting certificate data...")
 
-            # 3/4 — Extract certificate
+            # 4/5 — Extract certificate
             cert_data = extract_certificate(cert_path, MODEL, expected_type=cert_type)
             cert_product = cert_data.get("product_name", "Unknown")
             cert_params = cert_data.get("parameters", [])
             progress_bar.progress(75, text="Running compliance check...")
 
-            # 4/4 — Compare (pass classification for doc type validation)
+            # 5/5 — Compare (pass classification for doc type validation)
             result = compare_documents(spec_data, cert_data, cert_type=cert_type, model=MODEL, classification=classification)
             progress_bar.progress(100, text="Complete!")
             elapsed = time.time() - t0

@@ -573,8 +573,8 @@ def compare_documents(
 
     if not spec_params:
         return {
-            "status": "REVIEW",
-            "reason": "No parameters found in specification",
+            "status": "FAIL",
+            "reason": "INVALID SPECIFICATION: No parameters found in the specification document. Cannot validate certificate without a valid specification.",
             "cert_type": cert_type,
             "product_name": spec_product,
             "batch_number": cert_data.get("batch_number", ""),
@@ -584,7 +584,7 @@ def compare_documents(
             "parameters_passed": 0,
             "parameters_failed": 0,
             "parameters_missing": 0,
-            "parameters_review": 1,
+            "parameters_review": 0,
             "integrity_check": False,  # No spec params — integrity N/A
             "comparison_skipped": True,
             "details": [],
