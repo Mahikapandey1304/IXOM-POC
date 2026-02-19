@@ -115,16 +115,16 @@ class ParameterComparisonSchema(BaseModel):
     """Schema for individual parameter comparison result."""
     
     spec_name: str = Field(..., description="Parameter name from spec")
-    cert_name: str = Field(..., description="Parameter name from certificate")
+    cert_name: str = Field(default="", description="Parameter name from certificate")
     spec_value: str = Field(default="", description="Expected value from spec")
     cert_value: str = Field(default="", description="Actual value from certificate")
     spec_unit: str = Field(default="", description="Unit from spec")
     cert_unit: str = Field(default="", description="Unit from certificate")
     min_limit: str = Field(default="", description="Minimum limit")
     max_limit: str = Field(default="", description="Maximum limit")
-    status: Literal["PASS", "FAIL", "REVIEW", "INFO", "MISSING"] = Field(...)
+    status: Literal["PASS", "FAIL", "REVIEW", "MISSING"] = Field(...)
     reason: str = Field(default="", description="Explanation of comparison result")
-    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="AI confidence in this result (0.0-1.0)")
     
     class Config:
         str_strip_whitespace = True
@@ -137,21 +137,34 @@ class ComparisonSchema(BaseModel):
     reason: str = Field(default="", description="Overall comparison explanation")
     product_name: str = Field(default="", description="Product name")
     batch_number: str = Field(default="", description="Batch number from certificate")
+    total_params_in_spec: int = Field(default=0, ge=0, description="Total parameters found in specification")
     parameters_checked: int = Field(default=0, ge=0)
     parameters_passed: int = Field(default=0, ge=0)
     parameters_failed: int = Field(default=0, ge=0)
+    parameters_missing: int = Field(default=0, ge=0, description="Parameters in spec but not found in certificate")
     parameters_review: int = Field(default=0, ge=0)
+    integrity_check: bool = Field(default=False, description="True if Pass+Fail+Missing+Review == Total params in spec")
     parameter_details: List[ParameterComparisonSchema] = Field(default_factory=list)
     
     @model_validator(mode='after')
     def validate_parameter_counts(self):
-        """Ensure parameter counts are consistent."""
-        total = self.parameters_passed + self.parameters_failed + self.parameters_review
-        # Allow some flexibility - might have INFO status params
+        """Ensure parameter counts are consistent with architecture.
+        
+        Architecture rule: Pass + Fail + Missing + Review == Total params in spec
+        This is the integrity check from the whiteboard flowchart.
+        """
+        total = self.parameters_passed + self.parameters_failed + self.parameters_missing + self.parameters_review
         if self.parameters_checked > 0 and total > self.parameters_checked:
             raise ValueError(
-                f"Sum of passed/failed/review ({total}) cannot exceed checked ({self.parameters_checked})"
+                f"Sum of passed/failed/missing/review ({total}) cannot exceed checked ({self.parameters_checked})"
             )
+        # Auto-compute integrity_check from actual numbers
+        if total > 0 and total == self.total_params_in_spec:
+            self.integrity_check = True
+        elif total == 0 and self.total_params_in_spec == 0:
+            self.integrity_check = True
+        else:
+            self.integrity_check = False
         return self
     
     class Config:

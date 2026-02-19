@@ -352,7 +352,9 @@ div[data-baseweb="select"] {{ background: #ffffff; }}
 # ── Helper functions ────────────────────────────────────────────────────
 def status_badge(status: str) -> str:
     s = status.upper()
-    cls = {"PASS": "status-pass", "FAIL": "status-fail"}.get(s, "status-review")
+    if s == "NOT_IN_CERT":
+        s = "MISSING"
+    cls = {"PASS": "status-pass", "FAIL": "status-fail", "MISSING": "status-review"}.get(s, "status-review")
     return f'<span class="{cls}">{s}</span>'
 
 
@@ -470,8 +472,8 @@ with tab_validate:
             cert_params = cert_data.get("parameters", [])
             progress_bar.progress(75, text="Running compliance check...")
 
-            # 4/4 — Compare
-            result = compare_documents(spec_data, cert_data, cert_type=cert_type, model=MODEL)
+            # 4/4 — Compare (pass classification for doc type validation)
+            result = compare_documents(spec_data, cert_data, cert_type=cert_type, model=MODEL, classification=classification)
             progress_bar.progress(100, text="Complete!")
             elapsed = time.time() - t0
 
@@ -487,16 +489,21 @@ with tab_validate:
             n_pass = result.get("parameters_passed", 0)
             n_fail = result.get("parameters_failed", 0)
             n_review = result.get("parameters_review", 0)
-            n_not_in_cert = result.get("parameters_not_in_cert", 0)
+            n_missing = result.get("parameters_missing", 0)
 
             # Also count from details as fallback
-            if not (n_pass or n_fail or n_review) and details:
+            if not (n_pass or n_fail or n_review or n_missing) and details:
                 n_pass = sum(1 for d in details if d.get("status", "").upper() == "PASS")
                 n_fail = sum(1 for d in details if d.get("status", "").upper() == "FAIL")
                 n_review = sum(1 for d in details if d.get("status", "").upper() == "REVIEW")
-                n_not_in_cert = sum(
-                    1 for d in details if d.get("status", "").upper() == "NOT_IN_CERT"
+                n_missing = sum(
+                    1 for d in details if d.get("status", "").upper() == "MISSING"
                 )
+
+            # Architecture: total_params_in_spec and integrity check
+            total_params_in_spec = result.get("total_params_in_spec", len(spec_params))
+            integrity_ok = result.get("integrity_check", False)
+            total_checked = n_pass + n_fail + n_missing + n_review
 
             # Overall result banner
             banner_cls = {
@@ -524,6 +531,47 @@ with tab_validate:
                 unsafe_allow_html=True,
             )
 
+            # Integrity check banner
+            comparison_skipped = result.get("comparison_skipped", False)
+            # Override: recompute integrity from actual numbers
+            if total_checked > 0 and total_checked == total_params_in_spec:
+                integrity_ok = True
+            elif total_checked == 0 and total_params_in_spec == 0:
+                integrity_ok = True
+            elif comparison_skipped or total_checked == 0:
+                integrity_ok = False  # No params compared — can't claim integrity
+            else:
+                integrity_ok = (total_checked == total_params_in_spec)
+
+            if comparison_skipped or (total_checked == 0 and total_params_in_spec > 0):
+                # Product mismatch / doc type failure — no params were compared
+                st.markdown(
+                    f'<div class="alert-warning" style="margin-top:0.3rem;">'
+                    f"<strong>&#9888; Integrity Check SKIPPED:</strong> "
+                    f"No parameters were compared (0 of {total_params_in_spec} spec parameters checked). "
+                    f"Reason: {reason[:200] if reason else 'N/A'}"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+            elif integrity_ok:
+                st.markdown(
+                    f'<div class="alert-success" style="margin-top:0.3rem;">'
+                    f"<strong>&#10003; Integrity Check PASSED:</strong> "
+                    f"Pass({n_pass}) + Fail({n_fail}) + Missing({n_missing}) + Review({n_review}) "
+                    f"= {total_checked} == {total_params_in_spec} (Total in Spec)"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    f'<div class="alert-error" style="margin-top:0.3rem;">'
+                    f"<strong>&#10007; Integrity Check FAILED:</strong> "
+                    f"Pass({n_pass}) + Fail({n_fail}) + Missing({n_missing}) + Review({n_review}) "
+                    f"= {total_checked} != {total_params_in_spec} (Total in Spec)"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
             if reason:
                 st.markdown(
                     f'<div class="alert-warning" style="margin-top:0.3rem;">'
@@ -531,13 +579,14 @@ with tab_validate:
                     unsafe_allow_html=True,
                 )
 
-            # Metric cards
-            m1, m2, m3, m4 = st.columns(4)
+            # Metric cards (5 cards: Spec Total, Passed, Failed, Missing, Review)
+            m0, m1, m2, m3, m4 = st.columns(5)
             for col, label, val in [
+                (m0, "SPEC PARAMS", total_params_in_spec),
                 (m1, "PASSED", n_pass),
                 (m2, "FAILED", n_fail),
-                (m3, "REVIEW", n_review),
-                (m4, "NOT IN CERT", n_not_in_cert),
+                (m3, "MISSING", n_missing),
+                (m4, "REVIEW", n_review),
             ]:
                 col.markdown(
                     f'<div class="metric-card">'
@@ -556,6 +605,9 @@ with tab_validate:
                 rows = ""
                 for d in details:
                     s = d.get("status", "REVIEW").upper()
+                    # Map any legacy NOT_IN_CERT to MISSING
+                    if s == "NOT_IN_CERT":
+                        s = "MISSING"
                     badge = status_badge(s)
                     param = d.get("parameter", "") or d.get("spec_parameter", "—")
                     s_min = d.get("spec_min", "")
@@ -570,11 +622,14 @@ with tab_validate:
                         spec_range = "—"
                     spec_val = d.get("spec_value", "—") or "—"
                     cert_val = d.get("cert_value", "—") or "—"
+                    conf = d.get("confidence", 0.0)
+                    conf_display = f"{conf:.0%}" if conf else "—"
                     comment = d.get("reason", "") or ""
                     rows += (
                         f"<tr><td>{badge}</td><td>{param}</td>"
                         f"<td>{spec_range}</td><td>{spec_val}</td>"
-                        f"<td>{cert_val}</td><td>{comment}</td></tr>"
+                        f"<td>{cert_val}</td><td>{conf_display}</td>"
+                        f"<td>{comment}</td></tr>"
                     )
 
                 st.markdown(
@@ -587,6 +642,7 @@ with tab_validate:
                             <th>Spec Range</th>
                             <th>Spec Value</th>
                             <th>Cert Value</th>
+                            <th>Confidence</th>
                             <th>Reason</th>
                         </tr>
                     </thead>
@@ -600,13 +656,28 @@ with tab_validate:
             critical = [d for d in details if d.get("status", "").upper() == "FAIL"]
             if critical:
                 st.markdown(
-                    '<div class="section-header">Critical Issues</div>',
+                    '<div class="section-header">Critical Issues (FAIL)</div>',
                     unsafe_allow_html=True,
                 )
                 for d in critical:
                     st.markdown(
                         f'<div class="alert-error"><strong>{d.get("parameter","—")}:</strong> '
                         f'Spec={d.get("spec_value","—")} vs Cert={d.get("cert_value","—")} — '
+                        f'{d.get("reason","")}</div>',
+                        unsafe_allow_html=True,
+                    )
+
+            # Missing parameters
+            missing = [d for d in details if d.get("status", "").upper() in ("MISSING", "NOT_IN_CERT")]
+            if missing:
+                st.markdown(
+                    '<div class="section-header">Missing Parameters</div>',
+                    unsafe_allow_html=True,
+                )
+                for d in missing:
+                    st.markdown(
+                        f'<div class="alert-warning"><strong>{d.get("parameter","—")}:</strong> '
+                        f'Expected in certificate but not found — '
                         f'{d.get("reason","")}</div>',
                         unsafe_allow_html=True,
                     )
@@ -654,7 +725,11 @@ with tab_history:
             unsafe_allow_html=True,
         )
     else:
-        df = pd.read_csv(log_path)
+        try:
+            df = pd.read_csv(log_path, on_bad_lines="warn")
+        except TypeError:
+            # Older pandas versions use error_bad_lines param
+            df = pd.read_csv(log_path, error_bad_lines=False)
 
         # Filters
         col_f1, col_f2 = st.columns(2)

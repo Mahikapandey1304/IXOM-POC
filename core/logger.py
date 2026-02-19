@@ -27,10 +27,13 @@ AUDIT_COLUMNS = [
     "Status",
     "Reason",
     "Confidence",
+    "Total_Params_In_Spec",
     "Parameters_Checked",
     "Parameters_Passed",
     "Parameters_Failed",
     "Parameters_Missing",
+    "Parameters_Review",
+    "Integrity_Check",
 ]
 
 
@@ -84,10 +87,13 @@ def log_result(
         comparison.get("status", "ERROR"),
         comparison.get("reason", "")[:500],  # Truncate long reasons
         classification.get("confidence_score", 0.0),
+        comparison.get("total_params_in_spec", 0),
         comparison.get("parameters_checked", 0),
         comparison.get("parameters_passed", 0),
         comparison.get("parameters_failed", 0),
+        comparison.get("parameters_missing", 0),
         comparison.get("parameters_review", 0),
+        comparison.get("integrity_check", False),
     ]
 
     @retry_file_io

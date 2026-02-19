@@ -104,11 +104,27 @@ def process_single_pair(
         n_cert_params = len(cert_data.get("parameters", []))
         print(f"     → Extracted {n_cert_params} parameters, batch: {cert_data.get('batch_number', 'N/A')}")
 
-        # Step 4: Compare (AI-powered alignment)
+        # Step 4: Compare (AI-powered alignment with doc type validation)
         print(f"  ⚖️  Comparing (AI-powered alignment)...")
-        comparison = compare_documents(spec_data, cert_data, cert_type=cert_type, model=model)
+        comparison = compare_documents(
+            spec_data, cert_data,
+            cert_type=cert_type,
+            model=model,
+            classification=classification,
+        )
 
-        # Step 5: Log
+        # Step 5: Print architecture metrics
+        integrity = comparison.get("integrity_check", False)
+        total_spec = comparison.get("total_params_in_spec", 0)
+        p_pass = comparison.get("parameters_passed", 0)
+        p_fail = comparison.get("parameters_failed", 0)
+        p_miss = comparison.get("parameters_missing", 0)
+        p_rev = comparison.get("parameters_review", 0)
+        print(f"     → Result: {comparison.get('status', 'UNKNOWN')}")
+        print(f"     → Spec params: {total_spec} | Pass: {p_pass} | Fail: {p_fail} | Missing: {p_miss} | Review: {p_rev}")
+        print(f"     → Integrity check (P+F+M+R == Total): {'✅ PASS' if integrity else '❌ FAIL'}")
+
+        # Step 6: Log
         log_result(
             spec_file, cert_file, cert_type, model,
             classification, comparison, material_number

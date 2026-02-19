@@ -234,11 +234,18 @@ Return ONLY valid JSON in this EXACT format:
       "spec_unit": "<unit from spec>",
       "cert_value": "<actual value from certificate, or empty if not found>",
       "cert_unit": "<unit from certificate>",
-      "status": "PASS or FAIL or REVIEW or NOT_IN_CERT",
+      "status": "PASS or FAIL or REVIEW or MISSING",
+      "confidence": <float 0.0-1.0 — how sure you are about this result>,
       "reason": "<brief explanation of the verdict>"
     }}
   ]
 }}
+
+CONFIDENCE SCORE RULES:
+- 0.9-1.0: Exact match found, clear numeric comparison, certain result
+- 0.7-0.89: Good match but slight naming ambiguity or unit difference
+- 0.5-0.69: Partial match, inferred mapping, uncertain comparison
+- Below 0.5: Guessing, very uncertain — human should verify
 
 STATUS RULES:
 - PASS: Certificate value is within specification limits, OR qualitative value is acceptable
@@ -249,10 +256,10 @@ STATUS RULES:
         ONLY use FAIL when you are mathematically certain the value is out of range.
 - REVIEW: Units genuinely incompatible, measurement conditions genuinely differ (>2°C temp gap),
          cert shows a range instead of a specific tested value, or ambiguous compliance.
-- NOT_IN_CERT: Parameter exists in specification but has NO corresponding value in the certificate.
-              Use this ONLY when no matching parameter can be found in the certificate at all.
-              This is common for visual inspection items (Foreign Matter, etc.) that are
-              manufacturing-floor checks and do NOT appear in lab certificates.
+- MISSING: Parameter exists in specification but has NO corresponding value in the certificate.
+           Use this ONLY when no matching parameter can be found in the certificate at all.
+           This is common for visual inspection items (Foreign Matter, etc.) that are
+           manufacturing-floor checks and do NOT appear in lab certificates.
 
 Be strict on FAIL (only if math proves out of range), generous on PASS for qualitative matches.
 Every spec parameter MUST appear in the output, even if not found in the cert.
@@ -474,28 +481,69 @@ def compare_documents(
     cert_data: Dict,
     cert_type: str = "COA",
     model: str = None,
+    classification: Dict = None,
 ) -> Dict:
     """
     Compare extracted spec data against certificate data.
 
-    Uses AI-powered comparison for ALL certificate types (COA, COCA, COC).
-    Handles parameter name differences, product mismatch detection,
-    compliance statements, and numeric/qualitative validation.
+    Follows the whiteboard architecture flowchart:
+    ┌───────────────────────────────────────────────────────────────┐
+    │ STEP 1: Document type validation — is it a certificate?      │
+    │ STEP 2: Product mismatch pre-check                           │
+    │ STEP 3: AI extracts & compares each param from spec vs cert  │
+    │ STEP 4: CODE counts Pass / Fail / Missing / Review           │
+    │ STEP 5: Integrity check: P+F+M+R == Total params in spec    │
+    │ STEP 6: Decision logic:                                      │
+    │         - param_failed > 0        → FAIL                     │
+    │         - param_missing > 0       → REVIEW                   │
+    │         - all PASS                → PASS                     │
+    └───────────────────────────────────────────────────────────────┘
 
     Args:
         spec_data: Extracted spec JSON
         cert_data: Extracted certificate JSON
         cert_type: Type of certificate (COA, COCA, COC)
         model: OpenAI model override
+        classification: Output from document_classifier (optional)
 
     Returns:
-        dict with overall status, reason, and parameter details
+        dict with overall status, reason, counts, integrity check, and parameter details
     """
 
-    # ── Step 0: Product mismatch pre-check ──
+    # ═══════════════════════════════════════════════════════════════
+    # STEP 1: DOCUMENT TYPE VALIDATION
+    # From flowchart: "Is it a Certificate?" → NO → FAIL
+    # ═══════════════════════════════════════════════════════════════
+    if classification:
+        detected_type = classification.get("document_type", "").upper()
+        valid_cert_types = {"COA", "COCA", "COC", "PRODUCT_SPECIFICATION"}
+        if detected_type and detected_type not in valid_cert_types:
+            return {
+                "status": "FAIL",
+                "reason": f"Invalid document type: '{detected_type}' — expected a certificate (COA/COCA/COC)",
+                "cert_type": cert_type,
+                "product_name": spec_data.get("product_name", ""),
+                "batch_number": cert_data.get("batch_number", ""),
+                "document_type_valid": False,
+                "total_params_in_spec": len(spec_data.get("parameters", [])),
+                "parameters_checked": 0,
+                "parameters_passed": 0,
+                "parameters_failed": 0,
+                "parameters_missing": 0,
+                "parameters_review": 0,
+                "integrity_check": False,  # No params compared — integrity N/A
+                "comparison_skipped": True,
+                "details": [],
+            }
+
+    # ═══════════════════════════════════════════════════════════════
+    # STEP 2: PRODUCT MISMATCH PRE-CHECK
+    # ═══════════════════════════════════════════════════════════════
     spec_product = spec_data.get("product_name", "")
     cert_product = cert_data.get("product_name", "")
     is_match, match_conf, match_reason = _check_product_match(spec_product, cert_product)
+
+    total_params_in_spec = len(spec_data.get("parameters", []))
 
     if not is_match:
         return {
@@ -506,10 +554,15 @@ def compare_documents(
             "cert_product_name": cert_product,
             "batch_number": cert_data.get("batch_number", ""),
             "product_mismatch": True,
+            "document_type_valid": True,
+            "total_params_in_spec": total_params_in_spec,
             "parameters_checked": 0,
             "parameters_passed": 0,
             "parameters_failed": 0,
+            "parameters_missing": 0,
             "parameters_review": 0,
+            "integrity_check": False,  # No params compared — integrity N/A
+            "comparison_skipped": True,
             "details": [],
         }
 
@@ -525,10 +578,15 @@ def compare_documents(
             "cert_type": cert_type,
             "product_name": spec_product,
             "batch_number": cert_data.get("batch_number", ""),
+            "document_type_valid": True,
+            "total_params_in_spec": 0,
             "parameters_checked": 0,
             "parameters_passed": 0,
             "parameters_failed": 0,
+            "parameters_missing": 0,
             "parameters_review": 1,
+            "integrity_check": False,  # No spec params — integrity N/A
+            "comparison_skipped": True,
             "details": [],
         }
 
@@ -536,17 +594,36 @@ def compare_documents(
     if cert_type in ("COCA", "COC") and not cert_params:
         if compliance:
             return {
-                "status": "PASS",
-                "reason": f"Compliance statement present (no test data to compare): {compliance[:150]}",
+                "status": "REVIEW",
+                "reason": f"Compliance statement present but no test data to compare parameter-by-parameter: {compliance[:150]}",
                 "cert_type": cert_type,
                 "product_name": cert_product or spec_product,
                 "batch_number": cert_data.get("batch_number", ""),
                 "compliance_statement": compliance,
-                "parameters_checked": 0,
+                "document_type_valid": True,
+                "total_params_in_spec": total_params_in_spec,
+                "parameters_checked": total_params_in_spec,
                 "parameters_passed": 0,
                 "parameters_failed": 0,
+                "parameters_missing": total_params_in_spec,
                 "parameters_review": 0,
-                "details": [],
+                "integrity_check": True,
+                "details": [
+                    {
+                        "parameter": p.get("name", ""),
+                        "cert_parameter": "",
+                        "spec_value": p.get("value", ""),
+                        "spec_min": p.get("min_limit", ""),
+                        "spec_max": p.get("max_limit", ""),
+                        "spec_unit": p.get("unit", ""),
+                        "cert_value": "",
+                        "cert_unit": "",
+                        "status": "MISSING",
+                        "confidence": 0.9,
+                        "reason": "No test data in certificate — only compliance statement present",
+                    }
+                    for p in spec_params
+                ],
             }
         else:
             return {
@@ -555,10 +632,14 @@ def compare_documents(
                 "cert_type": cert_type,
                 "product_name": cert_product or spec_product,
                 "batch_number": cert_data.get("batch_number", ""),
+                "document_type_valid": True,
+                "total_params_in_spec": total_params_in_spec,
                 "parameters_checked": 0,
                 "parameters_passed": 0,
                 "parameters_failed": 0,
+                "parameters_missing": 0,
                 "parameters_review": 1,
+                "integrity_check": False,
                 "details": [],
             }
 
@@ -570,14 +651,22 @@ def compare_documents(
             "cert_type": cert_type,
             "product_name": cert_product or spec_product,
             "batch_number": cert_data.get("batch_number", ""),
+            "document_type_valid": True,
+            "total_params_in_spec": total_params_in_spec,
             "parameters_checked": 0,
             "parameters_passed": 0,
             "parameters_failed": 0,
+            "parameters_missing": 0,
             "parameters_review": 1,
+            "integrity_check": False,
             "details": [],
         }
 
-    # ── AI-powered intelligent comparison (ALL cert types) ──
+    # ═══════════════════════════════════════════════════════════════
+    # STEP 3: AI-POWERED COMPARISON
+    # AI compares each spec parameter against certificate
+    # Returns status + confidence per parameter
+    # ═══════════════════════════════════════════════════════════════
     try:
         ai_result = _ai_compare(spec_data, cert_data, cert_type=cert_type, model=model)
     except Exception:
@@ -596,16 +685,29 @@ def compare_documents(
                 "cert_product_name": cert_product,
                 "batch_number": cert_data.get("batch_number", ""),
                 "product_mismatch": True,
+                "document_type_valid": True,
+                "total_params_in_spec": total_params_in_spec,
                 "parameters_checked": 0,
                 "parameters_passed": 0,
                 "parameters_failed": 0,
+                "parameters_missing": 0,
                 "parameters_review": 0,
+                "integrity_check": False,  # No params compared — integrity N/A
+                "comparison_skipped": True,
                 "details": [],
             }
 
         # Build details from AI alignment
         details = []
         for p in ai_result["parameters"]:
+            # Map NOT_IN_CERT → MISSING for backward compatibility
+            raw_status = p.get("status", "REVIEW")
+            if raw_status == "NOT_IN_CERT":
+                raw_status = "MISSING"
+            # Ensure valid status
+            if raw_status not in ("PASS", "FAIL", "REVIEW", "MISSING"):
+                raw_status = "REVIEW"
+
             details.append({
                 "parameter": p.get("spec_parameter", ""),
                 "cert_parameter": p.get("cert_parameter", ""),
@@ -615,7 +717,8 @@ def compare_documents(
                 "spec_unit": p.get("spec_unit", ""),
                 "cert_value": p.get("cert_value", ""),
                 "cert_unit": p.get("cert_unit", ""),
-                "status": p.get("status", "REVIEW"),
+                "status": raw_status,
+                "confidence": float(p.get("confidence", 0.8)),
                 "reason": p.get("reason", ""),
             })
 
@@ -624,45 +727,86 @@ def compare_documents(
     else:
         # Fallback to legacy name-based matching
         details = _match_parameters_legacy(spec_params, cert_params)
+        # Map legacy REVIEW (missing) to MISSING
+        for d in details:
+            if d.get("status") == "REVIEW" and "Missing parameter" in d.get("reason", ""):
+                d["status"] = "MISSING"
+            if "confidence" not in d:
+                d["confidence"] = 0.7
         ai_compliance = compliance
 
-    # ── Determine overall status ──
-    # Separate matched parameters (PASS/FAIL/REVIEW) from NOT_IN_CERT
-    statuses = [d["status"] for d in details]
-    matched_statuses = [s for s in statuses if s != "NOT_IN_CERT"]
-    not_in_cert_count = statuses.count("NOT_IN_CERT")
+    # ═══════════════════════════════════════════════════════════════
+    # STEP 4: CODE COUNTS — NOT AI
+    # The code counts Pass/Fail/Missing/Review, NOT the AI.
+    # This ensures exact, reliable, auditable numbers.
+    # ═══════════════════════════════════════════════════════════════
+    pass_count = sum(1 for d in details if d["status"] == "PASS")
+    fail_count = sum(1 for d in details if d["status"] == "FAIL")
+    missing_count = sum(1 for d in details if d["status"] == "MISSING")
+    review_count = sum(1 for d in details if d["status"] == "REVIEW")
+    total_checked = pass_count + fail_count + missing_count + review_count
 
-    if "FAIL" in matched_statuses:
+    # ═══════════════════════════════════════════════════════════════
+    # STEP 5: INTEGRITY CHECK
+    # Pass + Fail + Missing + Review == Total params in spec?
+    # If not, AI skipped a parameter — flag it.
+    # ═══════════════════════════════════════════════════════════════
+    integrity_ok = (total_checked == total_params_in_spec)
+
+    # ═══════════════════════════════════════════════════════════════
+    # STEP 6: DECISION LOGIC — from whiteboard flowchart
+    #
+    # Is param_failed > 0? → YES → FAIL
+    #                      → NO  → Is param_missing > 0?
+    #                                → YES → REVIEW
+    #                                → NO  → (any REVIEW?) → REVIEW
+    #                                         else        → PASS
+    # ═══════════════════════════════════════════════════════════════
+    if fail_count > 0:
         overall_status = "FAIL"
-    elif "REVIEW" in matched_statuses:
+        failed_params = [d["parameter"] for d in details if d["status"] == "FAIL"]
+        overall_reason = f"{fail_count} parameter(s) failed: {', '.join(failed_params)}"
+    elif missing_count > 0:
         overall_status = "REVIEW"
-    elif matched_statuses:
-        # All matched parameters PASS — overall PASS
-        overall_status = "PASS"
-    elif not_in_cert_count > 0:
-        # No matched parameters at all, everything NOT_IN_CERT
+        missing_params = [d["parameter"] for d in details if d["status"] == "MISSING"]
+        overall_reason = (
+            f"All tested parameters passed but {missing_count} parameter(s) "
+            f"missing from certificate: {', '.join(missing_params)}"
+        )
+    elif review_count > 0:
         overall_status = "REVIEW"
+        review_params = [d["parameter"] for d in details if d["status"] == "REVIEW"]
+        overall_reason = (
+            f"No failures but {review_count} parameter(s) need human review: "
+            f"{', '.join(review_params)}"
+        )
     else:
-        overall_status = "REVIEW"
+        # All PASS, param_failed == 0, param_missing == 0
+        overall_status = "PASS"
+        overall_reason = "All parameters accounted for and within specification"
 
-    fail_reasons = [d["reason"] for d in details if d["status"] == "FAIL"]
-    review_reasons = [d["reason"] for d in details if d["status"] == "REVIEW"]
-    not_in_cert_reasons = [d["parameter"] for d in details if d["status"] == "NOT_IN_CERT"]
-    all_reasons = fail_reasons + review_reasons
-    if not_in_cert_reasons:
-        all_reasons.append(f"Not in cert: {', '.join(not_in_cert_reasons)}")
+    # Add integrity warning if check failed
+    if not integrity_ok:
+        overall_reason += (
+            f" [INTEGRITY WARNING: Checked {total_checked} parameters "
+            f"but spec has {total_params_in_spec}]"
+        )
 
     result = {
         "status": overall_status,
-        "reason": "; ".join(all_reasons) if all_reasons else "All parameters within specification",
+        "reason": overall_reason,
         "cert_type": cert_type,
         "product_name": spec_product or cert_product,
+        "cert_product_name": cert_product,
         "batch_number": cert_data.get("batch_number", ""),
-        "parameters_checked": len(details),
-        "parameters_passed": statuses.count("PASS"),
-        "parameters_failed": statuses.count("FAIL"),
-        "parameters_review": statuses.count("REVIEW"),
-        "parameters_not_in_cert": not_in_cert_count,
+        "document_type_valid": True,
+        "total_params_in_spec": total_params_in_spec,
+        "parameters_checked": total_checked,
+        "parameters_passed": pass_count,
+        "parameters_failed": fail_count,
+        "parameters_missing": missing_count,
+        "parameters_review": review_count,
+        "integrity_check": integrity_ok,
         "details": details,
     }
 
