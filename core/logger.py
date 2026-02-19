@@ -96,6 +96,8 @@ def log_result(
         comparison.get("integrity_check", False),
     ]
 
+    assert len(row) == len(AUDIT_COLUMNS), f"Column mismatch in log_result: {len(row)} != {len(AUDIT_COLUMNS)}"
+
     @retry_file_io
     def _write_row():
         with open(config.AUDIT_LOG, "a", newline="", encoding="utf-8") as f:
@@ -136,8 +138,10 @@ def log_error(
         "ERROR",
         error_msg[:500],
         0.0,
-        0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, False,
     ]
+
+    assert len(row) == len(AUDIT_COLUMNS), f"Column mismatch in log_error: {len(row)} != {len(AUDIT_COLUMNS)}"
 
     @retry_file_io
     def _write_row():
