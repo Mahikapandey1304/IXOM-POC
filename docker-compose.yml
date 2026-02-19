@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  ixom-validator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ixom-validator
+    restart: unless-stopped
+    
+    # Only expose to localhost - nginx will reverse proxy
+    ports:
+      - "127.0.0.1:8501:8501"
+    
+    # Environment variables from .env file
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - DEFAULT_MODEL=${DEFAULT_MODEL:-gpt-4o}
+      - TEMPERATURE=${TEMPERATURE:-0}
+      - DATA_DIR=/app/data
+      - LOGS_DIR=/app/logs
+      - OUTPUTS_DIR=/app/outputs
+      - IMAGE_DPI=${IMAGE_DPI:-200}
+      - MAX_PAGES_PER_DOC=${MAX_PAGES_PER_DOC:-10}
+    
+    # Volume mounts for persistent data
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./outputs:/app/outputs
+      - streamlit-cache:/root/.streamlit
+    
+    # Resource limits (adjust based on droplet size)
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    
+    # Network configuration
+    networks:
+      - ixom-network
+
+# Named volumes
+volumes:
+  streamlit-cache:
+    driver: local
+
+# Custom network
+networks:
+  ixom-network:
+    driver: bridge

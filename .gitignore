@@ -1,8 +1,9 @@
 # Intelligent Safety Net — .gitignore
 
-# Environment
+# Environment variables (NEVER commit .env with secrets!)
 .env
 *.env
+!.env.example
 
 # Python
 __pycache__/
@@ -19,11 +20,25 @@ env/
 # Outputs (large/generated)
 outputs/structured_json/*.json
 logs/*.csv
+logs/*.log
 
 # Data (keep mapping, ignore PDFs)
 data/specs/*.pdf
 data/certificates/*.pdf
 
+# Backups
+*.bak
+*.backup
+/opt/ixom-backups/
+
 # OS
 Thumbs.db
 .DS_Store
+
+# Docker (local development)
+docker-compose.override.yml
+
+# Temporary files
+tmp/
+temp/
+*.tmp
