@@ -37,10 +37,10 @@ st.set_page_config(
 )
 
 # ── IXOM Logo ────────────────────────────────────────────────────────────
-_logo_path = Path(__file__).parent / "ixom_logo.svg"
+_logo_path = Path(__file__).parent / "assets" / "ixom_logo.png"
 if _logo_path.exists():
     _logo_b64 = base64.b64encode(_logo_path.read_bytes()).decode()
-    _logo_src = f"data:image/svg+xml;base64,{_logo_b64}"
+    _logo_src = f"data:image/png;base64,{_logo_b64}"
 else:
     _logo_src = ""
 

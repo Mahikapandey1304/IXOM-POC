@@ -35,6 +35,8 @@ ENV PATH=/root/.local/bin:$PATH
 
 # Copy application code
 COPY core/ ./core/
+COPY .streamlit/ ./.streamlit/
+COPY assets/ ./assets/
 COPY *.py ./
 COPY data/mapping.xlsx ./data/mapping.xlsx
 
