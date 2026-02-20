@@ -14,6 +14,7 @@ import config
 from core.pdf_renderer import pdf_to_base64_images
 from core.retry_config import retry_openai_call, retry_file_io
 from core.schemas import CertificateSchema
+from core.openai_helper import create_chat_completion
 
 client = OpenAI(api_key=config.OPENAI_API_KEY)
 
@@ -143,17 +144,14 @@ def extract_certificate(pdf_path: str, model: str = None, expected_type: str = "
             },
         })
 
-    @retry_openai_call
-    def _call_openai():
-        return client.chat.completions.create(
-            model=model,
-            temperature=config.TEMPERATURE,
-            max_tokens=4096,
-            messages=[{"role": "user", "content": content}],
-            response_format={"type": "json_object"},
-        )
-    
-    response = _call_openai()
+    response = create_chat_completion(
+        client=client,
+        model=model,
+        temperature=config.TEMPERATURE,
+        max_output_tokens=4096,
+        messages=[{"role": "user", "content": content}],
+        response_format={"type": "json_object"},
+    )
     result_text = response.choices[0].message.content.strip()
 
     try:

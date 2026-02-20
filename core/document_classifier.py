@@ -14,6 +14,7 @@ import config
 from core.pdf_renderer import pdf_page_to_base64
 from core.retry_config import retry_openai_call
 from core.schemas import ClassificationSchema
+from core.openai_helper import create_chat_completion
 
 client = OpenAI(api_key=config.OPENAI_API_KEY)
 
@@ -54,31 +55,28 @@ def classify_document(pdf_path: str, model: str = None) -> dict:
     # Convert first page to image
     img_b64 = pdf_page_to_base64(pdf_path, page_num=0)
 
-    @retry_openai_call
-    def _call_openai():
-        return client.chat.completions.create(
-            model=model,
-            temperature=config.TEMPERATURE,
-            max_tokens=500,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": CLASSIFICATION_PROMPT},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{img_b64}",
-                                "detail": "high",
-                            },
+    response = create_chat_completion(
+        client=client,
+        model=model,
+        temperature=config.TEMPERATURE,
+        max_output_tokens=500,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": CLASSIFICATION_PROMPT},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/png;base64,{img_b64}",
+                            "detail": "high",
                         },
-                    ],
-                }
-            ],
-            response_format={"type": "json_object"},
-        )
-    
-    response = _call_openai()
+                    },
+                ],
+            }
+        ],
+        response_format={"type": "json_object"},
+    )
     result_text = response.choices[0].message.content.strip()
 
     try:

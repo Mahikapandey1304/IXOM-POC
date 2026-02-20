@@ -17,11 +17,18 @@ DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gpt-4o")
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0"))
 
 # ─── Model Rankings ──────────────────────────────────────────────────
+# Note: API parameter compatibility is handled automatically by openai_helper.py
+# - Legacy models (gpt-4o, gpt-4-turbo, gpt-4o-mini): use max_tokens
+# - Newer models (gpt-5.x, gpt-6.x): use max_completion_tokens
+# - O1-series models (o1-preview, o1-mini): use max_completion_tokens, no temperature
 AVAILABLE_MODELS = [
-    "gpt-4o",           # Best multimodal + reasoning
-    "gpt-4.1",          # Latest iteration
+    "gpt-4o",           # Best multimodal + reasoning (legacy API)
+    "gpt-5.2",          # Latest GPT-5 series (new API)
+    "gpt-4.1",          # Latest GPT-4 iteration
     "gpt-4o-mini",      # Cost-effective batch
     "gpt-4-turbo",      # Fallback
+    "o1-preview",       # Advanced reasoning model
+    "o1-mini",          # Cost-effective reasoning
 ]
 
 # ─── Paths ────────────────────────────────────────────────────────────
